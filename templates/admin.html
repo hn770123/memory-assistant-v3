@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <!--
+    AI秘書 - DB管理画面
+    ===================
+    データベースの内容を参照・編集・削除するための管理画面です。
+
+    管理対象テーブル:
+    - user_attributes: ユーザーの属性
+    - user_memories: ユーザーの記憶
+    - user_goals: ユーザーの目標
+    - assistant_requests: アシスタントへのお願い
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI秘書 - DB管理</title>
+    <!-- スタイルシートを読み込み -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- ヘッダー部分 -->
+    <header class="header">
+        <h1 class="header-title">AI秘書 - DB管理</h1>
+        <div class="header-controls">
+            <!-- チャット画面へ戻るリンク -->
+            <a href="/" class="btn btn-secondary">チャットへ戻る</a>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="main-content admin-content">
+        <!-- タブナビゲーション -->
+        <div class="tabs">
+            <button class="tab active" data-table="attributes">属性</button>
+            <button class="tab" data-table="memories">記憶</button>
+            <button class="tab" data-table="goals">目標</button>
+            <button class="tab" data-table="requests">お願い</button>
+        </div>
+
+        <!-- データテーブルコンテナ -->
+        <div class="table-container">
+            <!-- 属性テーブル -->
+            <div class="data-table" id="attributes-table">
+                <div class="table-header">
+                    <h2>ユーザーの属性</h2>
+                    <button class="btn btn-primary" onclick="showAddForm('attributes')">
+                        + 追加
+                    </button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>属性名</th>
+                            <th>属性値</th>
+                            <th>更新日時</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attributes-body">
+                        <!-- データがここに動的に挿入される -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 記憶テーブル -->
+            <div class="data-table" id="memories-table" style="display: none;">
+                <div class="table-header">
+                    <h2>ユーザーの記憶</h2>
+                    <button class="btn btn-primary" onclick="showAddForm('memories')">
+                        + 追加
+                    </button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>内容</th>
+                            <th>カテゴリ</th>
+                            <th>圧縮レベル</th>
+                            <th>状態</th>
+                            <th>更新日時</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="memories-body">
+                        <!-- データがここに動的に挿入される -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 目標テーブル -->
+            <div class="data-table" id="goals-table" style="display: none;">
+                <div class="table-header">
+                    <h2>ユーザーの目標</h2>
+                    <button class="btn btn-primary" onclick="showAddForm('goals')">
+                        + 追加
+                    </button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>内容</th>
+                            <th>優先度</th>
+                            <th>状態</th>
+                            <th>更新日時</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="goals-body">
+                        <!-- データがここに動的に挿入される -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- お願いテーブル -->
+            <div class="data-table" id="requests-table" style="display: none;">
+                <div class="table-header">
+                    <h2>アシスタントへのお願い</h2>
+                    <button class="btn btn-primary" onclick="showAddForm('requests')">
+                        + 追加
+                    </button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>内容</th>
+                            <th>カテゴリ</th>
+                            <th>状態</th>
+                            <th>更新日時</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="requests-body">
+                        <!-- データがここに動的に挿入される -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 追加/編集モーダル -->
+        <div class="modal" id="edit-modal" style="display: none;">
+            <div class="modal-content">
+                <h2 id="modal-title">データを追加</h2>
+                <form id="edit-form">
+                    <!-- フォームの内容は動的に生成される -->
+                    <div id="form-fields"></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal()">
+                            キャンセル
+                        </button>
+                        <button type="submit" class="btn btn-primary">
+                            保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 削除確認モーダル -->
+        <div class="modal" id="delete-modal" style="display: none;">
+            <div class="modal-content">
+                <h2>削除の確認</h2>
+                <p id="delete-message">このデータを削除しますか？</p>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeDeleteModal()">
+                        キャンセル
+                    </button>
+                    <button type="button" class="btn btn-danger" id="confirm-delete-btn">
+                        削除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- JavaScriptを読み込み -->
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>

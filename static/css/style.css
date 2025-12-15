@@ -1,0 +1,696 @@
+/*
+AI秘書 スタイルシート
+====================
+アプリケーション全体のスタイルを定義します。
+
+構成:
+1. リセットと基本設定
+2. カラー変数
+3. 共通コンポーネント
+4. ヘッダー
+5. チャット画面
+6. テストモードパネル
+7. 管理画面
+8. モーダル
+9. レスポンシブ対応
+*/
+
+/* ===== 1. リセットと基本設定 ===== */
+* {
+    /* 全要素のボックスサイズ計算方法を統一 */
+    box-sizing: border-box;
+    /* デフォルトのマージン・パディングをリセット */
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    /* フォント設定 */
+    font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    /* 背景色 */
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+/* ===== 2. カラー変数 ===== */
+:root {
+    /* メインカラー */
+    --primary-color: #4a90d9;
+    --primary-hover: #357abd;
+    --secondary-color: #6c757d;
+    --danger-color: #dc3545;
+
+    /* 背景色 */
+    --bg-primary: #f5f7fa;
+    --bg-secondary: #ffffff;
+    --bg-chat: #e8ecf1;
+
+    /* テキスト色 */
+    --text-primary: #333333;
+    --text-secondary: #666666;
+    --text-light: #999999;
+
+    /* ボーダー色 */
+    --border-color: #dde1e6;
+
+    /* メッセージ色 */
+    --user-message-bg: #4a90d9;
+    --user-message-text: #ffffff;
+    --assistant-message-bg: #ffffff;
+    --assistant-message-text: #333333;
+}
+
+/* ===== 3. 共通コンポーネント ===== */
+
+/* ボタン */
+.btn {
+    display: inline-block;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s, opacity 0.2s;
+}
+
+.btn:hover {
+    opacity: 0.9;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-hover);
+}
+
+.btn-secondary {
+    background-color: var(--secondary-color);
+    color: white;
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+.btn-text {
+    background-color: transparent;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+}
+
+.btn-text:hover {
+    background-color: var(--bg-chat);
+}
+
+.btn-small {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+/* ===== 4. ヘッダー ===== */
+.header {
+    /* 固定ヘッダー */
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+
+    /* スタイル */
+    height: 60px;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 20px;
+
+    /* レイアウト */
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.header-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+/* スイッチ（トグル）コンポーネント */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 24px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: var(--primary-color);
+}
+
+input:checked + .slider:before {
+    transform: translateX(24px);
+}
+
+.switch-label {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+/* ===== 5. チャット画面 ===== */
+.main-content {
+    /* ヘッダー分の余白 */
+    padding-top: 60px;
+    height: 100vh;
+    display: flex;
+}
+
+.chat-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* メッセージエリア */
+.messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* メッセージ共通スタイル */
+.message {
+    max-width: 80%;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message-header {
+    font-size: 12px;
+    color: var(--text-light);
+    margin-bottom: 4px;
+}
+
+.message-content {
+    padding: 12px 16px;
+    border-radius: 12px;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+/* ユーザーメッセージ */
+.message.user {
+    align-self: flex-end;
+}
+
+.message.user .message-header {
+    text-align: right;
+}
+
+.message.user .message-content {
+    background-color: var(--user-message-bg);
+    color: var(--user-message-text);
+    border-bottom-right-radius: 4px;
+}
+
+/* アシスタントメッセージ */
+.message.assistant {
+    align-self: flex-start;
+}
+
+.message.assistant .message-content {
+    background-color: var(--assistant-message-bg);
+    color: var(--assistant-message-text);
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* システムメッセージ（履歴リセット通知など） */
+.message.system {
+    align-self: center;
+    max-width: 100%;
+}
+
+.message.system .message-content {
+    background-color: var(--bg-chat);
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 8px 16px;
+}
+
+/* ローディングインジケーター */
+.loading {
+    display: flex;
+    gap: 4px;
+    padding: 12px 16px;
+}
+
+.loading-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--text-light);
+    border-radius: 50%;
+    animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1); }
+}
+
+/* 入力エリア */
+.input-area {
+    padding: 16px 20px;
+    background-color: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+}
+
+.input-container {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.input-container textarea {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-family: inherit;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    resize: none;
+    max-height: 150px;
+    line-height: 1.5;
+}
+
+.input-container textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.input-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* ===== 6. テストモードパネル ===== */
+.test-panel {
+    width: 400px;
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border-left: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+}
+
+.test-panel-header {
+    padding: 12px 16px;
+    background-color: #252526;
+    border-bottom: 1px solid #3c3c3c;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.test-panel-header h2 {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.test-panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+}
+
+.test-log-entry {
+    margin-bottom: 16px;
+    padding: 8px;
+    background-color: #2d2d2d;
+    border-radius: 4px;
+}
+
+.test-log-entry .type {
+    color: #569cd6;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.test-log-entry .timestamp {
+    color: #6a9955;
+    font-size: 10px;
+}
+
+.test-log-entry pre {
+    margin-top: 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* ===== 7. 管理画面 ===== */
+.admin-content {
+    padding: 80px 20px 20px;
+    flex-direction: column;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* タブ */
+.tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.tab {
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 500;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s;
+}
+
+.tab:hover {
+    color: var(--text-primary);
+}
+
+.tab.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+}
+
+/* テーブル */
+.table-container {
+    background-color: var(--bg-secondary);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.data-table {
+    padding: 20px;
+}
+
+.table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.table-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+th {
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-transform: uppercase;
+}
+
+td {
+    font-size: 14px;
+}
+
+tr:hover {
+    background-color: var(--bg-primary);
+}
+
+/* 状態バッジ */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 12px;
+    border-radius: 12px;
+}
+
+.badge-active {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.badge-inactive {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.badge-completed {
+    background-color: #cce5ff;
+    color: #004085;
+}
+
+/* テーブル操作ボタン */
+.table-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.table-actions button {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+/* ===== 8. モーダル ===== */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+
+.modal-content {
+    background-color: var(--bg-secondary);
+    padding: 24px;
+    border-radius: 12px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.modal-content h2 {
+    margin-bottom: 20px;
+    font-size: 18px;
+}
+
+/* フォーム */
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.form-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    margin-top: 24px;
+}
+
+/* 記憶整理の進捗表示 */
+.organize-progress {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.progress-step {
+    padding: 12px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.progress-step.started {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.progress-step.processing {
+    background-color: #cce5ff;
+    color: #004085;
+}
+
+.progress-step.completed {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.progress-step.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* ===== 9. レスポンシブ対応 ===== */
+@media (max-width: 768px) {
+    .header {
+        padding: 0 12px;
+    }
+
+    .header-title {
+        font-size: 16px;
+    }
+
+    .header-controls {
+        gap: 8px;
+    }
+
+    .switch-label {
+        display: none;
+    }
+
+    .chat-container {
+        max-width: 100%;
+    }
+
+    .message {
+        max-width: 90%;
+    }
+
+    .test-panel {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+    }
+
+    .admin-content {
+        padding: 70px 12px 12px;
+    }
+
+    .tabs {
+        overflow-x: auto;
+    }
+
+    .tab {
+        padding: 10px 16px;
+        white-space: nowrap;
+    }
+
+    table {
+        display: block;
+        overflow-x: auto;
+    }
+}
