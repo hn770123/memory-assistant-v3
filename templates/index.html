@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <!--
+    AI秘書 - メインチャット画面
+    ===========================
+    ユーザーとAIアシスタントがチャットするためのインターフェースです。
+
+    機能:
+    - リアルタイムチャット
+    - テストモード切り替え
+    - 履歴クリア
+    - 記憶整理の実行
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI秘書</title>
+    <!-- スタイルシートを読み込み -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- ヘッダー部分 -->
+    <header class="header">
+        <h1 class="header-title">AI秘書</h1>
+        <div class="header-controls">
+            <!-- テストモード切り替えスイッチ -->
+            <label class="switch" title="テストモード: Ollamaへのリクエスト内容を表示">
+                <input type="checkbox" id="test-mode-toggle">
+                <span class="slider"></span>
+            </label>
+            <span class="switch-label">テストモード</span>
+
+            <!-- DB保守画面へのリンク -->
+            <a href="/admin" class="btn btn-secondary">DB管理</a>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="main-content">
+        <!-- チャットエリア -->
+        <div class="chat-container">
+            <!-- メッセージ表示エリア -->
+            <div class="messages" id="messages">
+                <!-- 初期メッセージ -->
+                <div class="message assistant">
+                    <div class="message-header">アシスタント</div>
+                    <div class="message-content">
+                        こんにちは！AI秘書です。何かお手伝いできることはありますか？
+                    </div>
+                </div>
+            </div>
+
+            <!-- 入力エリア -->
+            <div class="input-area">
+                <div class="input-container">
+                    <!-- テキスト入力欄 -->
+                    <textarea
+                        id="message-input"
+                        placeholder="メッセージを入力してください..."
+                        rows="1"
+                    ></textarea>
+                    <!-- 送信ボタン -->
+                    <button id="send-btn" class="btn btn-primary" title="送信 (Enter)">
+                        送信
+                    </button>
+                </div>
+                <!-- 補助ボタン -->
+                <div class="input-actions">
+                    <button id="clear-btn" class="btn btn-text" title="会話履歴をクリア">
+                        履歴クリア
+                    </button>
+                    <button id="organize-btn" class="btn btn-text" title="記憶の整理・圧縮を実行">
+                        記憶を整理
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- テストモード表示エリア（テストモードON時のみ表示） -->
+        <div class="test-panel" id="test-panel" style="display: none;">
+            <div class="test-panel-header">
+                <h2>テストモード - デバッグ情報</h2>
+                <button id="clear-test-log" class="btn btn-small">ログクリア</button>
+            </div>
+            <div class="test-panel-content" id="test-log">
+                <!-- テストログがここに表示される -->
+            </div>
+        </div>
+
+        <!-- 記憶整理の進捗表示モーダル -->
+        <div class="modal" id="organize-modal" style="display: none;">
+            <div class="modal-content">
+                <h2>記憶の整理・圧縮</h2>
+                <div class="organize-progress" id="organize-progress">
+                    <!-- 進捗がここに表示される -->
+                </div>
+                <button id="close-modal-btn" class="btn btn-primary" style="display: none;">
+                    閉じる
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- JavaScriptを読み込み -->
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

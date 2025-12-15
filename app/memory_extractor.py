@@ -1,0 +1,349 @@
+"""
+記憶抽出・判定モジュール
+======================
+ユーザーの入力から記憶すべき情報を抽出・判定します。
+
+設計思想:
+- ユーザーの発言のみを記憶対象とする（AIの応答は除外）
+- LLMを使って自然言語で記憶を抽出・分類
+- 重複や矛盾の検出も行う
+
+抽出対象:
+1. ユーザー属性（名前、年齢、職業、趣味など）
+2. ユーザーの記憶（日常的な出来事、好み、経験など）
+3. ユーザーの目標（やりたいこと、達成したいことなど）
+4. アシスタントへのお願い（話し方、対応方法など）
+"""
+
+import json
+from typing import Dict, List, Optional, Any
+import sys
+import os
+
+# プロジェクトルートをパスに追加
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from app.ollama_client import OllamaClient, get_ollama_client
+from app.database import (
+    add_attribute,
+    add_memory,
+    add_goal,
+    add_request,
+    get_all_attributes,
+    get_all_memories,
+    get_all_goals
+)
+
+
+# 記憶抽出用のプロンプト
+EXTRACTION_PROMPT = """あなたは会話分析AIです。ユーザーの発言から、保存すべき情報を抽出してください。
+
+【重要なルール】
+1. ユーザーの発言のみを分析対象とする
+2. AIアシスタントの応答は絶対に記憶対象としない
+3. 推測や仮定は含めない
+4. 明確に述べられた情報のみを抽出する
+
+【分析対象の会話】
+AIの応答: {ai_response}
+ユーザーの入力: {user_input}
+
+【抽出カテゴリ】
+1. attributes（属性）: 名前、年齢、職業、住所、趣味など、ユーザー自身の特性
+2. memories（記憶）: 日常の出来事、経験、好み、知識など
+3. goals（目標）: やりたいこと、達成したい目標、予定など
+4. requests（お願い）: アシスタントへの要望、話し方の希望など
+
+【出力形式】
+JSON形式で出力してください。抽出する情報がない場合は空の配列を返してください。
+```json
+{{
+    "attributes": [
+        {{"name": "属性名", "value": "属性値"}}
+    ],
+    "memories": [
+        {{"content": "記憶内容", "category": "カテゴリ"}}
+    ],
+    "goals": [
+        {{"content": "目標内容", "priority": 5}}
+    ],
+    "requests": [
+        {{"content": "お願い内容", "category": "カテゴリ"}}
+    ]
+}}
+```
+
+categoryの値:
+- memories: general（一般）, preference（好み）, event（出来事）, knowledge（知識）
+- requests: tone（話し方）, behavior（振る舞い）, format（形式）, general（一般）
+
+【注意】
+- 「私は」「僕は」などユーザーの一人称で始まる文に注目
+- AIの発言（「〜ですね」「〜しましょう」など）は絶対に含めない
+- 不確かな情報は含めない
+- JSONのみを出力し、他の説明は不要
+"""
+
+
+class MemoryExtractor:
+    """
+    記憶抽出クラス
+
+    ユーザーの入力から記憶すべき情報を抽出し、
+    データベースに保存します。
+    """
+
+    def __init__(self, ollama_client: OllamaClient = None):
+        """
+        エクストラクターを初期化
+
+        Args:
+            ollama_client: Ollamaクライアント（省略時は自動取得）
+        """
+        self.client = ollama_client or get_ollama_client()
+        # テストモード用のログ
+        self.extraction_log = []
+
+    def extract_memories(self, user_input: str,
+                         ai_response: str = "") -> Dict[str, List]:
+        """
+        ユーザー入力から記憶を抽出する
+
+        Args:
+            user_input: ユーザーの入力テキスト
+            ai_response: 直前のAIの応答（除外用）
+
+        Returns:
+            Dict: 抽出された記憶情報
+                - attributes: 属性リスト
+                - memories: 記憶リスト
+                - goals: 目標リスト
+                - requests: お願いリスト
+        """
+        # プロンプトを構築
+        prompt = EXTRACTION_PROMPT.format(
+            ai_response=ai_response if ai_response else "（なし）",
+            user_input=user_input
+        )
+
+        # テストモード用にログを記録
+        self.extraction_log.append({
+            'type': 'extraction_request',
+            'user_input': user_input,
+            'ai_response': ai_response,
+            'prompt': prompt
+        })
+
+        try:
+            # LLMで抽出
+            response = self.client.generate(prompt)
+
+            # テストモード用にログを記録
+            self.extraction_log.append({
+                'type': 'extraction_response',
+                'raw_response': response
+            })
+
+            # JSONを抽出して解析
+            extracted = self._parse_json_response(response)
+
+            return extracted
+
+        except Exception as e:
+            # エラー時は空の結果を返す
+            self.extraction_log.append({
+                'type': 'extraction_error',
+                'error': str(e)
+            })
+            return {
+                'attributes': [],
+                'memories': [],
+                'goals': [],
+                'requests': []
+            }
+
+    def _parse_json_response(self, response: str) -> Dict[str, List]:
+        """
+        LLMの応答からJSONを抽出・解析する
+
+        Args:
+            response: LLMの応答テキスト
+
+        Returns:
+            Dict: 解析されたJSON（または空の辞書）
+        """
+        try:
+            # マークダウンのコードブロックを削除
+            if '```json' in response:
+                response = response.split('```json')[1].split('```')[0]
+            elif '```' in response:
+                response = response.split('```')[1].split('```')[0]
+
+            # JSONを解析
+            data = json.loads(response.strip())
+
+            # 期待される構造を保証
+            result = {
+                'attributes': data.get('attributes', []),
+                'memories': data.get('memories', []),
+                'goals': data.get('goals', []),
+                'requests': data.get('requests', [])
+            }
+
+            return result
+
+        except json.JSONDecodeError:
+            # JSON解析失敗時は空の結果
+            return {
+                'attributes': [],
+                'memories': [],
+                'goals': [],
+                'requests': []
+            }
+
+    def save_extracted_memories(self, extracted: Dict[str, List]) -> Dict[str, int]:
+        """
+        抽出された記憶をデータベースに保存する
+
+        Args:
+            extracted: extract_memories()の戻り値
+
+        Returns:
+            Dict: 各カテゴリの保存件数
+        """
+        saved_counts = {
+            'attributes': 0,
+            'memories': 0,
+            'goals': 0,
+            'requests': 0
+        }
+
+        # 属性を保存
+        for attr in extracted.get('attributes', []):
+            if 'name' in attr and 'value' in attr:
+                add_attribute(attr['name'], attr['value'])
+                saved_counts['attributes'] += 1
+
+        # 記憶を保存
+        for mem in extracted.get('memories', []):
+            if 'content' in mem:
+                category = mem.get('category', 'general')
+                add_memory(mem['content'], category)
+                saved_counts['memories'] += 1
+
+        # 目標を保存
+        for goal in extracted.get('goals', []):
+            if 'content' in goal:
+                priority = goal.get('priority', 5)
+                add_goal(goal['content'], priority)
+                saved_counts['goals'] += 1
+
+        # お願いを保存
+        for req in extracted.get('requests', []):
+            if 'content' in req:
+                category = req.get('category', 'general')
+                add_request(req['content'], category)
+                saved_counts['requests'] += 1
+
+        # テストモード用にログを記録
+        self.extraction_log.append({
+            'type': 'save_result',
+            'counts': saved_counts
+        })
+
+        return saved_counts
+
+    def process_input(self, user_input: str,
+                      ai_response: str = "") -> Dict[str, Any]:
+        """
+        ユーザー入力を処理し、記憶を抽出・保存する
+
+        これは抽出と保存を一括で行う便利メソッドです。
+
+        Args:
+            user_input: ユーザーの入力テキスト
+            ai_response: 直前のAIの応答
+
+        Returns:
+            Dict: 処理結果
+                - extracted: 抽出された記憶
+                - saved_counts: 保存件数
+        """
+        # 記憶を抽出
+        extracted = self.extract_memories(user_input, ai_response)
+
+        # 抽出された記憶があれば保存
+        saved_counts = self.save_extracted_memories(extracted)
+
+        return {
+            'extracted': extracted,
+            'saved_counts': saved_counts
+        }
+
+    def clear_logs(self):
+        """
+        テストモード用のログをクリアする
+        """
+        self.extraction_log = []
+
+    def get_logs(self) -> List[Dict]:
+        """
+        テストモード用のログを取得する
+
+        Returns:
+            List[Dict]: ログエントリのリスト
+        """
+        return self.extraction_log
+
+
+# グローバルなエクストラクターインスタンス
+_extractor = None
+
+
+def get_memory_extractor() -> MemoryExtractor:
+    """
+    メモリエクストラクターのシングルトンインスタンスを取得
+
+    Returns:
+        MemoryExtractor: エクストラクターインスタンス
+    """
+    global _extractor
+    if _extractor is None:
+        _extractor = MemoryExtractor()
+    return _extractor
+
+
+# テスト用: 直接実行時の動作確認
+if __name__ == '__main__':
+    print("=== 記憶抽出モジュールのテスト ===\n")
+
+    # テストデータ
+    test_cases = [
+        {
+            'ai_response': 'こんにちは！何かお手伝いできることはありますか？',
+            'user_input': '私は田中太郎です。30歳で、東京に住んでいます。'
+        },
+        {
+            'ai_response': '趣味は何ですか？',
+            'user_input': '読書と映画鑑賞が好きです。特にSF小説が好きです。'
+        },
+        {
+            'ai_response': '他に何かありますか？',
+            'user_input': '来月までにTOEIC900点を取りたいです。あと、敬語で話してください。'
+        }
+    ]
+
+    extractor = MemoryExtractor()
+
+    for i, test in enumerate(test_cases, 1):
+        print(f"\n【テストケース {i}】")
+        print(f"AI応答: {test['ai_response']}")
+        print(f"ユーザー入力: {test['user_input']}")
+
+        result = extractor.extract_memories(
+            test['user_input'],
+            test['ai_response']
+        )
+
+        print(f"\n抽出結果:")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
