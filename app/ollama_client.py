@@ -52,7 +52,7 @@ class OllamaClient:
 
     def generate(self, prompt: str, system_prompt: str = None,
                  context: str = None, history: List[Dict] = None,
-                 stream: bool = False) -> str:
+                 stream: bool = False, format: str = None) -> str:
         """
         テキストを生成する
 
@@ -62,6 +62,7 @@ class OllamaClient:
             context: MCP経由で取得したユーザーコンテキスト
             history: 会話履歴のリスト
             stream: ストリーミングモードを使用するか
+            format: レスポンスのフォーマット（例: 'json'）
 
         Returns:
             str: LLMからの応答テキスト
@@ -100,6 +101,10 @@ class OllamaClient:
             'messages': messages,
             'stream': stream
         }
+        
+        # フォーマット指定があれば追加
+        if format:
+            request_data['format'] = format
 
         # テストモード用にリクエストを記録
         self.request_log.append({

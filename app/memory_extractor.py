@@ -169,7 +169,7 @@ class MemoryExtractor:
 
         try:
             # LLMで抽出
-            response = self.client.generate(prompt)
+            response = self.client.generate(prompt, format='json')
 
             # テストモード用にログを記録
             self.extraction_log.append({
