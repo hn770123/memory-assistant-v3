@@ -618,11 +618,7 @@ def delete_request(request_id: int) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute('''
-        UPDATE assistant_requests
-        SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    ''', (request_id,))
+    cursor.execute('DELETE FROM assistant_requests WHERE id = ?', (request_id,))
 
     success = cursor.rowcount > 0
     conn.commit()

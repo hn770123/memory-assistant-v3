@@ -379,6 +379,16 @@ function startMemoryStatusCheck() {
             } else {
                 // 処理完了
                 stopMemoryStatusCheck();
+
+                // 完了時のログがあれば表示（テストモード）
+                if (data.logs && data.logs.length > 0) {
+                    const logData = [{
+                        type: 'memory_extraction',
+                        logs: data.logs,
+                        timestamp: new Date().toISOString()
+                    }];
+                    displayTestLogs(logData);
+                }
             }
         } catch (error) {
             console.error('ステータス確認エラー:', error);

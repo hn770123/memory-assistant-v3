@@ -194,6 +194,8 @@ def chat():
 
     if test_logs is not None:
         ollama_client.clear_logs()
+        # 記憶抽出ログもクリア（新しいチャットのため）
+        get_memory_extractor().clear_logs()
 
     # AIの応答を生成
     ai_response = ollama_client.generate(
@@ -240,13 +242,9 @@ def chat():
     }
 
     if test_logs is not None:
-        # 記憶抽出のログも追加
-        extractor = get_memory_extractor()
-        test_logs.append({
-            'type': 'memory_extraction',
-            'logs': extractor.get_logs()[-3:] if extractor.get_logs() else [],
-            'timestamp': datetime.now().isoformat()
-        })
+        # 記憶抽出のログは非同期処理後に取得するため、ここでは空にするか
+        # 必要に応じて初期状態などを入れる（今回はクライアント側でのポーリングに任せる）
+        pass
         response_data['test_logs'] = test_logs
 
     return jsonify(response_data)
@@ -458,9 +456,17 @@ def get_processing_status():
     記憶処理の実行状態を取得
     """
     global is_memory_processing
-    return jsonify({
+    
+    response = {
         'processing': is_memory_processing
-    })
+    }
+    
+    # テストモードならログを含める
+    if session.get('test_mode'):
+        extractor = get_memory_extractor()
+        response['logs'] = extractor.get_logs()
+        
+    return jsonify(response)
 
 
 # アプリケーションのエントリーポイント

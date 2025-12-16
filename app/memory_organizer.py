@@ -44,77 +44,91 @@ from config import MEMORY_COMPRESSION_THRESHOLDS
 
 
 # 重複検出用プロンプト
-DUPLICATE_DETECTION_PROMPT = """以下の記憶リストから、同じ意味や重複している記憶のペアを見つけてください。
+# 英語プロンプト：性能向上のため英語で指示します
+# 日本語訳：
+# 以下の記憶リストから、同じ意味や重複している記憶のペアを見つけてください。
+# 【記憶リスト】{memories}
+# 【出力形式】
+# 重複するペアをJSON形式で出力してください。重複がない場合は空の配列を返してください。
+DUPLICATE_DETECTION_PROMPT = """Identify pairs of memories that have the same meaning or are duplicates from the list below.
 
-【記憶リスト】
+### Memory List
 {memories}
 
-【出力形式】
-重複するペアをJSON形式で出力してください。重複がない場合は空の配列を返してください。
+### Output Format
+Output the duplicate pairs in JSON format. If there are no duplicates, return an empty array.
 ```json
 [
-    {{"id1": 1, "id2": 3, "reason": "両方とも〇〇について述べている"}},
-    {{"id1": 2, "id2": 5, "reason": "同じ情報の異なる表現"}}
+    {{"id1": 1, "id2": 3, "reason": "Both mention exactly the same topic"}},
+    {{"id1": 2, "id2": 5, "reason": "Different expression of the same information"}}
 ]
 ```
-
-JSONのみを出力し、他の説明は不要です。"""
+Output **JSON ONLY**. No other text.
+"""
 
 
 # 統合用プロンプト
-MERGE_PROMPT = """以下の2つの記憶を1つに統合してください。
-情報が失われないように、両方の重要な情報を含めてください。
+# 日本語訳：以下の2つの記憶を1つに統合してください。情報が失われないように、両方の重要な情報を含めてください。
+MERGE_PROMPT = """Merge the following two memories into one.
+Include all important information from both to ensure no information is lost.
 
-【記憶1】
+### Memory 1
 {memory1}
 
-【記憶2】
+### Memory 2
 {memory2}
 
-【出力形式】
-統合された記憶を1文で出力してください。JSONなどは不要です。"""
+### Output Format
+Output the merged memory in a single Japanese sentence. No JSON.
+"""
 
 
 # 整形用プロンプト
-FORMAT_PROMPT = """以下の記憶の表現を自然な日本語に整えてください。
-意味は変えずに、読みやすく整形してください。
+# 日本語訳：以下の記憶の表現を自然な日本語に整えてください。意味は変えずに、読みやすく整形してください。
+FORMAT_PROMPT = """Refine the expression of the following memory into natural Japanese.
+Make it easier to read without changing the meaning.
 
-【元の記憶】
+### Original Memory
 {memory}
 
-【出力形式】
-整形された記憶を1文で出力してください。"""
+### Output Format
+Output the refined memory in a single Japanese sentence.
+"""
 
 
 # 圧縮用プロンプト
-COMPRESS_PROMPT = """以下の記憶を圧縮してください。
-重要な情報を保持しながら、より短い表現にしてください。
+# 日本語訳：以下の記憶を圧縮してください。重要な情報を保持しながら、より短い表現にしてください。
+COMPRESS_PROMPT = """Compress the following memory.
+Keep the important information but make the expression shorter.
 
-【圧縮レベル】{level}（1:軽度, 2:中度, 3:強度）
+### Compression Level
+{level} (1:Light, 2:Medium, 3:Strong)
 
-【元の記憶】
+### Original Memory
 {memory}
 
-【出力形式】
-圧縮された記憶を出力してください。圧縮レベルが高いほど短く。"""
+### Output Format
+Output the compressed memory in Japanese. The higher the compression level, the shorter it should be.
+"""
 
 
 # 矛盾検出用プロンプト
-CONFLICT_DETECTION_PROMPT = """以下の属性/目標リストから、矛盾している項目を見つけてください。
+# 日本語訳：以下の属性/目標リストから、矛盾している項目を見つけてください。
+CONFLICT_DETECTION_PROMPT = """Identify conflicting items from the following attribute/goal list.
 
-【項目リスト】
+### Item List
 {items}
 
-【出力形式】
-矛盾するペアをJSON形式で出力してください。矛盾がない場合は空の配列を返してください。
+### Output Format
+Output the conflicting pairs in JSON format. If there are no conflicts, return an empty array.
 ```json
 [
-    {{"id1": 1, "id2": 3, "newer_id": 3, "reason": "〇〇が矛盾している"}}
+    {{"id1": 1, "id2": 3, "newer_id": 3, "reason": "Values are contradictory"}}
 ]
 ```
-
-newer_idには、より新しい情報（保持すべき方）のIDを入れてください。
-JSONのみを出力し、他の説明は不要です。"""
+In `newer_id`, specify the ID of the newer information (the one that should be kept).
+Output **JSON ONLY**. No other text.
+"""
 
 
 class MemoryOrganizer:
