@@ -174,7 +174,8 @@ def format_context_for_llm(context: dict) -> str:
     if context['goals']:
         parts.append("【ユーザーの目標】")
         for goal in context['goals']:
-            priority_mark = "★" * (11 - goal['priority'])  # 優先度が高いほど★が多い
+            priority = goal['priority'] if goal['priority'] is not None else 5
+            priority_mark = "★" * (11 - priority)  # 優先度が高いほど★が多い
             parts.append(f"- {goal['goal_content']} {priority_mark}")
         parts.append("")
 

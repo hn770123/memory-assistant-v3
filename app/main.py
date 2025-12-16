@@ -73,7 +73,28 @@ app = Flask(
 app.secret_key = SECRET_KEY
 
 # データベースを初期化
+# データベースを初期化
 init_database()
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """グローバルな例外ハンドラー"""
+    import traceback
+    from werkzeug.exceptions import HTTPException
+    
+    # HTTPエラーはそのまま通過させる
+    if isinstance(e, HTTPException):
+        return e
+
+    # その他の予期せぬエラーをJSONで返す
+    error_details = traceback.format_exc()
+    print(f"Unhandled Exception: {error_details}")
+    return jsonify({
+        "error": "Internal Server Error",
+        "message": str(e),
+        "traceback": error_details
+    }), 500
 
 
 # ==================================================
