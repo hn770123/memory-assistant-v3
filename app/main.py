@@ -60,6 +60,10 @@ from app.memory_extractor import get_memory_extractor
 from app.memory_organizer import get_memory_organizer
 
 
+# グローバル変数：記憶処理の状態
+is_memory_processing = False
+
+
 # Flaskアプリケーションを作成
 app = Flask(
     __name__,
@@ -216,10 +220,15 @@ def chat():
 
     # 記憶の抽出・保存を非同期で実行（ユーザーが応答を読む間に）
     def extract_and_save():
-        extractor = get_memory_extractor()
-        # 直前のAI応答を取得（history[-2]がユーザー入力前のAI応答）
-        prev_ai_response = history[-4]['content'] if len(history) >= 4 else ""
-        extractor.process_input(user_input, prev_ai_response)
+        global is_memory_processing
+        is_memory_processing = True
+        try:
+            extractor = get_memory_extractor()
+            # 直前のAI応答を取得（history[-2]がユーザー入力前のAI応答）
+            prev_ai_response = history[-4]['content'] if len(history) >= 4 else ""
+            extractor.process_input(user_input, prev_ai_response)
+        finally:
+            is_memory_processing = False
 
     # バックグラウンドで記憶抽出を実行
     threading.Thread(target=extract_and_save).start()
@@ -440,6 +449,17 @@ def system_status():
         'available_models': ollama_client.get_available_models(),
         'test_mode': session.get('test_mode', DEFAULT_TEST_MODE),
         'session_timeout': SESSION_TIMEOUT_SECONDS
+    })
+
+
+@app.route('/api/system/processing_status', methods=['GET'])
+def get_processing_status():
+    """
+    記憶処理の実行状態を取得
+    """
+    global is_memory_processing
+    return jsonify({
+        'processing': is_memory_processing
     })
 
 

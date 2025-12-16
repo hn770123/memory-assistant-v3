@@ -24,6 +24,7 @@ const clearTestLogBtn = document.getElementById('clear-test-log');
 const organizeModal = document.getElementById('organize-modal');
 const organizeProgress = document.getElementById('organize-progress');
 const closeModalBtn = document.getElementById('close-modal-btn');
+const memoryIndicator = document.getElementById('memory-indicator');
 
 
 // ===== 初期化処理 =====
@@ -190,6 +191,9 @@ async function sendMessage() {
             displayTestLogs(data.test_logs);
         }
 
+        // 記憶処理の監視を開始
+        startMemoryStatusCheck();
+
     } catch (error) {
         removeLoading(loadingId);
         addMessage('システム', 'エラーが発生しました: ' + error.message, 'system');
@@ -352,6 +356,47 @@ function addProgressStep(log) {
 
 
 /**
+ * 記憶処理の状態監視
+ */
+let memoryCheckInterval = null;
+
+function startMemoryStatusCheck() {
+    // 既に実行中なら一旦クリア
+    if (memoryCheckInterval) {
+        clearInterval(memoryCheckInterval);
+    }
+
+    // まず表示する（処理開始直後とみなす）
+    memoryIndicator.style.display = 'flex';
+
+    memoryCheckInterval = setInterval(async () => {
+        try {
+            const response = await fetch('/api/system/processing_status');
+            const data = await response.json();
+
+            if (data.processing) {
+                memoryIndicator.style.display = 'flex';
+            } else {
+                // 処理完了
+                stopMemoryStatusCheck();
+            }
+        } catch (error) {
+            console.error('ステータス確認エラー:', error);
+            stopMemoryStatusCheck();
+        }
+    }, 1000); // 1秒ごとにチェック
+}
+
+function stopMemoryStatusCheck() {
+    if (memoryCheckInterval) {
+        clearInterval(memoryCheckInterval);
+        memoryCheckInterval = null;
+    }
+    memoryIndicator.style.display = 'none';
+}
+
+
+/**
  * テストログを表示する
  *
  * @param {Array} logs - テストログの配列
@@ -366,13 +411,13 @@ function displayTestLogs(logs) {
 
         // ログの種類に応じて表示を変える
         if (log.type === 'mcp_context') {
-            content += `<pre>${escapeHtml(log.context)}</pre>`;
+            content += `<pre>${escapeHtml(log.context).replace(/\n/g, '<br>')}</pre>`;
         } else if (log.type === 'ollama_request') {
-            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2))}</pre>`;
+            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2)).replace(/\n/g, '<br>')}</pre>`;
         } else if (log.type === 'session_reset') {
             content += `<pre>理由: ${log.reason}</pre>`;
         } else if (log.type === 'memory_extraction') {
-            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2))}</pre>`;
+            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2)).replace(/\n/g, '<br>')}</pre>`;
         }
 
         entryDiv.innerHTML = content;
