@@ -8,7 +8,7 @@ requests>=2.31.0
 mcp>=1.0.0
 
 # Async Support（非同期処理サポート）
-asyncio-compat>=0.1.0
+
 
 # Date/Time Utilities（日時操作ユーティリティ）
 python-dateutil>=2.8.2
