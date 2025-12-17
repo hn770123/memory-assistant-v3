@@ -421,13 +421,13 @@ def remove_data(table_name, record_id):
 
 
 # ==================================================
-# 記憶整理機能
+# 情報整理機能
 # ==================================================
 
 @app.route('/organize', methods=['POST'])
 def organize_memories():
     """
-    記憶の整理・圧縮を実行
+    ユーザー情報の整理・圧縮を実行（属性/エピソード/目標/お願いの全て）
     """
     organizer = get_memory_organizer()
     organizer.clear_logs()
@@ -444,7 +444,7 @@ def organize_memories():
 @app.route('/organize/status', methods=['GET'])
 def get_organize_status():
     """
-    記憶整理の進捗状況を取得
+    情報整理の進捗状況を取得
     """
     organizer = get_memory_organizer()
     return jsonify({

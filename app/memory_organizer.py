@@ -1,27 +1,28 @@
 """
-記憶整理・圧縮モジュール
-======================
-記憶の整理（統合、整形、更新）と圧縮を行います。
+情報整理モジュール
+================
+ユーザー情報の整理（統合、整形、矛盾解決）と圧縮を行います。
 
-人間の記憶システムを参考に:
-- 新しい記憶は詳細に保持
-- 古い記憶は徐々に圧縮（要約化）
-- 同じ内容は統合
-- 矛盾する情報は新しい方で更新
+整理対象:
+- 属性（attributes）: 名前、年齢、職業などの基本情報
+- エピソード（memories）: 日常の出来事、好み、経験など
+- 目標（goals）: やりたいこと、達成したいこと
+- お願い（requests）: アシスタントへの要望
 
-処理ステップ:
-1. 重複検出: 同じ意味の記憶を検出
-2. 統合: 重複する記憶を1つにまとめる
-3. 整形: 表現を整える（文法、フォーマット）
-4. 矛盾解決: 矛盾する情報を新しい方で更新
-5. 圧縮: 古い記憶を要約化
+処理ステップ（逐次実行）:
+1. 属性の整理: 重複・矛盾の検出と解決
+2. エピソードの整理: 重複統合、整形、圧縮
+3. 目標の整理: 重複・矛盾の検出と解決
+4. お願いの整理: 重複統合、整形
 
-各ステップの進捗はコールバック関数で通知されます。
+各ステップの進捗はコールバック関数でリアルタイムに通知されます。
+LLMへの負荷を考慮し、全ての処理は逐次実行されます。
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Callable, Optional, Any
+from enum import Enum
 import sys
 import os
 
@@ -33,27 +34,53 @@ from app.database import (
     get_all_memories,
     get_all_attributes,
     get_all_goals,
+    get_all_requests,
     update_memory,
     update_attribute,
     update_goal,
+    update_request,
     delete_memory,
+    delete_attribute,
+    delete_request,
     update_compression_level,
     get_connection
 )
 from config import MEMORY_COMPRESSION_THRESHOLDS
 
 
-# 重複検出用プロンプト
-# 英語プロンプト：性能向上のため英語で指示します
-# 日本語訳：
-# 以下の記憶リストから、同じ意味や重複している記憶のペアを見つけてください。
-# 【記憶リスト】{memories}
-# 【出力形式】
-# 重複するペアをJSON形式で出力してください。重複がない場合は空の配列を返してください。
-DUPLICATE_DETECTION_PROMPT = """Identify pairs of memories that have the same meaning or are duplicates from the list below.
+class DataType(Enum):
+    """整理対象のデータタイプ"""
+    ATTRIBUTE = "attribute"      # 属性
+    EPISODE = "episode"          # エピソード（旧: 記憶）
+    GOAL = "goal"                # 目標
+    REQUEST = "request"          # お願い
 
-### Memory List
-{memories}
+
+class OrganizeStep(Enum):
+    """整理ステップ"""
+    ATTRIBUTE = ("属性", 1)
+    EPISODE = ("エピソード", 2)
+    GOAL = ("目標", 3)
+    REQUEST = ("お願い", 4)
+
+    def __init__(self, label: str, order: int):
+        self.label = label
+        self.order = order
+
+    @property
+    def display(self) -> str:
+        return f"ステップ {self.order}/4: {self.label}"
+
+
+# ==================================================
+# LLMプロンプト定義（英語で指示、日本語で出力）
+# ==================================================
+
+# 重複検出用プロンプト
+DUPLICATE_DETECTION_PROMPT = """Identify pairs of items that have the same meaning or are duplicates from the list below.
+
+### Item List
+{items}
 
 ### Output Format
 Output the duplicate pairs in JSON format. If there are no duplicates, return an empty array.
@@ -66,55 +93,48 @@ Output the duplicate pairs in JSON format. If there are no duplicates, return an
 Output **JSON ONLY**. No other text.
 """
 
-
 # 統合用プロンプト
-# 日本語訳：以下の2つの記憶を1つに統合してください。情報が失われないように、両方の重要な情報を含めてください。
-MERGE_PROMPT = """Merge the following two memories into one.
+MERGE_PROMPT = """Merge the following two items into one.
 Include all important information from both to ensure no information is lost.
 
-### Memory 1
-{memory1}
+### Item 1
+{item1}
 
-### Memory 2
-{memory2}
+### Item 2
+{item2}
 
 ### Output Format
-Output the merged memory in a single Japanese sentence. No JSON.
+Output the merged content in a single Japanese sentence. No JSON.
 """
-
 
 # 整形用プロンプト
-# 日本語訳：以下の記憶の表現を自然な日本語に整えてください。意味は変えずに、読みやすく整形してください。
-FORMAT_PROMPT = """Refine the expression of the following memory into natural Japanese.
+FORMAT_PROMPT = """Refine the expression of the following text into natural Japanese.
 Make it easier to read without changing the meaning.
 
-### Original Memory
-{memory}
+### Original Text
+{text}
 
 ### Output Format
-Output the refined memory in a single Japanese sentence.
+Output the refined text in Japanese. Keep it concise.
 """
 
-
 # 圧縮用プロンプト
-# 日本語訳：以下の記憶を圧縮してください。重要な情報を保持しながら、より短い表現にしてください。
-COMPRESS_PROMPT = """Compress the following memory.
+COMPRESS_PROMPT = """Compress the following episode.
 Keep the important information but make the expression shorter.
 
 ### Compression Level
 {level} (1:Light, 2:Medium, 3:Strong)
 
-### Original Memory
-{memory}
+### Original Episode
+{content}
 
 ### Output Format
-Output the compressed memory in Japanese. The higher the compression level, the shorter it should be.
+Output the compressed episode in Japanese. The higher the compression level, the shorter it should be.
 """
 
-
 # 矛盾検出用プロンプト
-# 日本語訳：以下の属性/目標リストから、矛盾している項目を見つけてください。
-CONFLICT_DETECTION_PROMPT = """Identify conflicting items from the following attribute/goal list.
+CONFLICT_DETECTION_PROMPT = """Identify conflicting items from the following list.
+Conflicting items have contradictory information about the same topic.
 
 ### Item List
 {items}
@@ -133,10 +153,14 @@ Output **JSON ONLY**. No other text.
 
 class MemoryOrganizer:
     """
-    記憶整理クラス
+    情報整理クラス
 
-    記憶の整理・圧縮処理を行い、進捗をコールバックで通知します。
+    ユーザー情報の整理・圧縮処理を行い、進捗をコールバックで通知します。
+    LLMへの負荷を考慮し、全ての処理は逐次実行されます。
     """
+
+    # 処理制限（一度に処理する最大件数）
+    MAX_ITEMS_PER_STEP = 20
 
     def __init__(self, ollama_client: OllamaClient = None):
         """
@@ -150,6 +174,8 @@ class MemoryOrganizer:
         self.progress_callback: Optional[Callable[[Dict], None]] = None
         # 処理ログ
         self.organization_log = []
+        # 現在のステップ
+        self._current_step: Optional[OrganizeStep] = None
 
     def set_progress_callback(self, callback: Callable[[Dict], None]):
         """
@@ -158,28 +184,46 @@ class MemoryOrganizer:
         Args:
             callback: 進捗情報を受け取る関数
                 引数は Dict[str, Any] 形式で以下のキーを含む:
-                - step: ステップ名
-                - status: 'started', 'processing', 'completed'
+                - step: ステップ名（attribute/episode/goal/request/overall）
+                - step_display: 表示用ステップ名（例: "ステップ 1/4: 属性"）
+                - status: 'started', 'processing', 'completed', 'skipped'
                 - message: 詳細メッセージ
+                - progress: 進捗情報（current, total）
                 - data: 追加データ（オプション）
         """
         self.progress_callback = callback
 
-    def _notify_progress(self, step: str, status: str,
-                         message: str, data: Any = None):
+    def _notify_progress(
+        self,
+        step: str,
+        status: str,
+        message: str,
+        current: int = 0,
+        total: int = 0,
+        data: Any = None
+    ):
         """
         進捗を通知する内部メソッド
 
         Args:
             step: 処理ステップ名
-            status: 状態
+            status: 状態（started/processing/completed/skipped/error）
             message: メッセージ
+            current: 現在の処理番号
+            total: 全体の処理数
             data: 追加データ
         """
+        # ステップ表示名を取得
+        step_display = ""
+        if self._current_step:
+            step_display = self._current_step.display
+
         progress_info = {
             'step': step,
+            'step_display': step_display,
             'status': status,
             'message': message,
+            'progress': {'current': current, 'total': total} if total > 0 else None,
             'data': data,
             'timestamp': datetime.now().isoformat()
         }
@@ -193,83 +237,251 @@ class MemoryOrganizer:
 
     def organize_all(self) -> Dict[str, Any]:
         """
-        全ての記憶整理処理を実行
+        全ての情報整理処理を実行（逐次処理）
 
         Returns:
             Dict: 処理結果のサマリー
         """
-        self._notify_progress('overall', 'started', '記憶の整理を開始します')
+        self._notify_progress(
+            'overall', 'started',
+            '📋 情報整理を開始します（属性→エピソード→目標→お願いの順に処理）'
+        )
 
         results = {
-            'duplicates_merged': 0,
-            'formatted': 0,
-            'conflicts_resolved': 0,
-            'compressed': 0
+            'attributes': {'merged': 0, 'formatted': 0, 'conflicts_resolved': 0},
+            'episodes': {'merged': 0, 'formatted': 0, 'compressed': 0},
+            'goals': {'merged': 0, 'formatted': 0, 'conflicts_resolved': 0},
+            'requests': {'merged': 0, 'formatted': 0}
         }
 
         try:
-            # ステップ1: 重複検出と統合
-            self._notify_progress('duplicate', 'started', '重複記憶の検出を開始')
-            merged = self._detect_and_merge_duplicates()
-            results['duplicates_merged'] = merged
-            self._notify_progress('duplicate', 'completed',
-                                  f'{merged}件の重複を統合しました')
+            # ステップ1: 属性の整理
+            self._current_step = OrganizeStep.ATTRIBUTE
+            self._notify_progress(
+                'attribute', 'started',
+                f'🏷️ {self._current_step.display}の整理を開始'
+            )
+            results['attributes'] = self._organize_attributes()
+            self._notify_progress(
+                'attribute', 'completed',
+                f'✅ {self._current_step.display}の整理が完了',
+                data=results['attributes']
+            )
 
-            # ステップ2: 整形
-            self._notify_progress('format', 'started', '記憶の整形を開始')
-            formatted = self._format_memories()
-            results['formatted'] = formatted
-            self._notify_progress('format', 'completed',
-                                  f'{formatted}件の記憶を整形しました')
+            # ステップ2: エピソードの整理
+            self._current_step = OrganizeStep.EPISODE
+            self._notify_progress(
+                'episode', 'started',
+                f'📝 {self._current_step.display}の整理を開始'
+            )
+            results['episodes'] = self._organize_episodes()
+            self._notify_progress(
+                'episode', 'completed',
+                f'✅ {self._current_step.display}の整理が完了',
+                data=results['episodes']
+            )
 
-            # ステップ3: 矛盾解決
-            self._notify_progress('conflict', 'started', '矛盾の検出を開始')
-            resolved = self._resolve_conflicts()
-            results['conflicts_resolved'] = resolved
-            self._notify_progress('conflict', 'completed',
-                                  f'{resolved}件の矛盾を解決しました')
+            # ステップ3: 目標の整理
+            self._current_step = OrganizeStep.GOAL
+            self._notify_progress(
+                'goal', 'started',
+                f'🎯 {self._current_step.display}の整理を開始'
+            )
+            results['goals'] = self._organize_goals()
+            self._notify_progress(
+                'goal', 'completed',
+                f'✅ {self._current_step.display}の整理が完了',
+                data=results['goals']
+            )
 
-            # ステップ4: 圧縮
-            self._notify_progress('compress', 'started', '古い記憶の圧縮を開始')
-            compressed = self._compress_old_memories()
-            results['compressed'] = compressed
-            self._notify_progress('compress', 'completed',
-                                  f'{compressed}件の記憶を圧縮しました')
+            # ステップ4: お願いの整理
+            self._current_step = OrganizeStep.REQUEST
+            self._notify_progress(
+                'request', 'started',
+                f'💬 {self._current_step.display}の整理を開始'
+            )
+            results['requests'] = self._organize_requests()
+            self._notify_progress(
+                'request', 'completed',
+                f'✅ {self._current_step.display}の整理が完了',
+                data=results['requests']
+            )
 
-            self._notify_progress('overall', 'completed',
-                                  '記憶の整理が完了しました', results)
+            self._current_step = None
+            self._notify_progress(
+                'overall', 'completed',
+                '🎉 全ての情報整理が完了しました',
+                data=results
+            )
 
         except Exception as e:
-            self._notify_progress('overall', 'error',
-                                  f'エラーが発生しました: {str(e)}')
+            self._notify_progress(
+                'overall', 'error',
+                f'❌ エラーが発生しました: {str(e)}'
+            )
             results['error'] = str(e)
 
         return results
 
-    def _detect_and_merge_duplicates(self) -> int:
+    # ==================================================
+    # 属性の整理
+    # ==================================================
+
+    def _organize_attributes(self) -> Dict[str, int]:
         """
-        重複する記憶を検出して統合する
+        属性の整理を実行
 
         Returns:
-            int: 統合された記憶の数
+            Dict: 処理結果
         """
-        memories = get_all_memories(active_only=True)
+        result = {'merged': 0, 'formatted': 0, 'conflicts_resolved': 0}
+        attributes = get_all_attributes()
 
-        if len(memories) < 2:
-            return 0
+        if not attributes:
+            self._notify_progress(
+                'attribute', 'skipped',
+                '整理対象の属性がありません'
+            )
+            return result
 
-        # 記憶リストを文字列に変換
-        memory_list_str = "\n".join([
-            f"ID:{m['id']} - {m['memory_content']}"
-            for m in memories
+        total = len(attributes)
+        self._notify_progress(
+            'attribute', 'processing',
+            f'{total}件の属性を確認中...',
+            current=0, total=total
+        )
+
+        # 矛盾検出と解決
+        if len(attributes) >= 2:
+            conflicts = self._detect_conflicts(attributes, 'attribute_name', 'attribute_value')
+            result['conflicts_resolved'] = self._resolve_attribute_conflicts(conflicts, attributes)
+
+        # 整形処理
+        attributes = get_all_attributes()  # 再取得
+        for i, attr in enumerate(attributes[:self.MAX_ITEMS_PER_STEP]):
+            self._notify_progress(
+                'attribute', 'processing',
+                f'属性「{attr["attribute_name"]}」を整形中...',
+                current=i + 1, total=min(len(attributes), self.MAX_ITEMS_PER_STEP)
+            )
+            if self._format_attribute(attr):
+                result['formatted'] += 1
+
+        return result
+
+    def _format_attribute(self, attr: Dict) -> bool:
+        """属性を整形する"""
+        original = f"{attr['attribute_name']}: {attr['attribute_value']}"
+        prompt = FORMAT_PROMPT.format(text=original)
+        formatted = self.client.generate(prompt).strip()
+
+        # 「名前: 値」形式から値部分を抽出
+        if ':' in formatted:
+            parts = formatted.split(':', 1)
+            if len(parts) == 2:
+                formatted_value = parts[1].strip()
+            else:
+                formatted_value = formatted
+        else:
+            formatted_value = formatted
+
+        if formatted_value and formatted_value != attr['attribute_value']:
+            update_attribute(attr['id'], formatted_value)
+            return True
+        return False
+
+    def _resolve_attribute_conflicts(
+        self,
+        conflicts: List[Dict],
+        attributes: List[Dict]
+    ) -> int:
+        """属性の矛盾を解決する"""
+        resolved = 0
+        processed_ids = set()
+
+        for conflict in conflicts:
+            id1, id2 = conflict.get('id1'), conflict.get('id2')
+            newer_id = conflict.get('newer_id')
+
+            if id1 in processed_ids or id2 in processed_ids:
+                continue
+
+            older_id = id1 if newer_id == id2 else id2
+            attr1 = next((a for a in attributes if a['id'] == id1), None)
+            attr2 = next((a for a in attributes if a['id'] == id2), None)
+
+            if attr1 and attr2:
+                self._notify_progress(
+                    'attribute', 'processing',
+                    f'属性の矛盾を解決中: 「{attr1["attribute_name"]}」'
+                )
+                delete_attribute(older_id)
+                processed_ids.add(id1)
+                processed_ids.add(id2)
+                resolved += 1
+
+        return resolved
+
+    # ==================================================
+    # エピソード（旧: 記憶）の整理
+    # ==================================================
+
+    def _organize_episodes(self) -> Dict[str, int]:
+        """
+        エピソードの整理を実行
+
+        Returns:
+            Dict: 処理結果
+        """
+        result = {'merged': 0, 'formatted': 0, 'compressed': 0}
+        episodes = get_all_memories(active_only=True)
+
+        if not episodes:
+            self._notify_progress(
+                'episode', 'skipped',
+                '整理対象のエピソードがありません'
+            )
+            return result
+
+        total = len(episodes)
+        self._notify_progress(
+            'episode', 'processing',
+            f'{total}件のエピソードを確認中...',
+            current=0, total=total
+        )
+
+        # 重複検出と統合
+        if len(episodes) >= 2:
+            result['merged'] = self._merge_duplicate_episodes(episodes)
+
+        # 整形処理
+        episodes = get_all_memories(active_only=True)  # 再取得
+        for i, ep in enumerate(episodes[:self.MAX_ITEMS_PER_STEP]):
+            self._notify_progress(
+                'episode', 'processing',
+                f'エピソードを整形中... ({i + 1}/{min(len(episodes), self.MAX_ITEMS_PER_STEP)})',
+                current=i + 1, total=min(len(episodes), self.MAX_ITEMS_PER_STEP)
+            )
+            if self._format_episode(ep):
+                result['formatted'] += 1
+
+        # 圧縮処理
+        result['compressed'] = self._compress_old_episodes()
+
+        return result
+
+    def _merge_duplicate_episodes(self, episodes: List[Dict]) -> int:
+        """重複するエピソードを統合する"""
+        # エピソードリストを文字列に変換
+        items_str = "\n".join([
+            f"ID:{ep['id']} - {ep['memory_content']}"
+            for ep in episodes[:self.MAX_ITEMS_PER_STEP]
         ])
 
-        # 重複検出
-        prompt = DUPLICATE_DETECTION_PROMPT.format(memories=memory_list_str)
+        prompt = DUPLICATE_DETECTION_PROMPT.format(items=items_str)
         response = self.client.generate(prompt)
 
         try:
-            # JSONを解析
             duplicates = self._parse_json_response(response)
             if not isinstance(duplicates, list):
                 return 0
@@ -278,29 +490,26 @@ class MemoryOrganizer:
             processed_ids = set()
 
             for dup in duplicates:
-                id1 = dup.get('id1')
-                id2 = dup.get('id2')
+                id1, id2 = dup.get('id1'), dup.get('id2')
 
-                # 既に処理済みならスキップ
                 if id1 in processed_ids or id2 in processed_ids:
                     continue
 
-                # 記憶を取得
-                mem1 = next((m for m in memories if m['id'] == id1), None)
-                mem2 = next((m for m in memories if m['id'] == id2), None)
+                ep1 = next((e for e in episodes if e['id'] == id1), None)
+                ep2 = next((e for e in episodes if e['id'] == id2), None)
 
-                if mem1 and mem2:
-                    self._notify_progress('duplicate', 'processing',
-                                          f'記憶 {id1} と {id2} を統合中...')
+                if ep1 and ep2:
+                    self._notify_progress(
+                        'episode', 'processing',
+                        f'エピソード {id1} と {id2} を統合中...'
+                    )
 
-                    # 統合
                     merge_prompt = MERGE_PROMPT.format(
-                        memory1=mem1['memory_content'],
-                        memory2=mem2['memory_content']
+                        item1=ep1['memory_content'],
+                        item2=ep2['memory_content']
                     )
                     merged_content = self.client.generate(merge_prompt).strip()
 
-                    # 新しい内容で更新し、もう一方を削除
                     update_memory(id1, merged_content)
                     delete_memory(id2, hard_delete=False)
 
@@ -313,132 +522,35 @@ class MemoryOrganizer:
         except Exception:
             return 0
 
-    def _format_memories(self) -> int:
-        """
-        記憶の表現を整形する
+    def _format_episode(self, episode: Dict) -> bool:
+        """エピソードを整形する"""
+        prompt = FORMAT_PROMPT.format(text=episode['memory_content'])
+        formatted = self.client.generate(prompt).strip()
 
-        Returns:
-            int: 整形された記憶の数
-        """
-        memories = get_all_memories(active_only=True)
-        formatted_count = 0
+        if formatted and formatted != episode['memory_content']:
+            update_memory(episode['id'], formatted)
+            return True
+        return False
 
-        for mem in memories[:10]:  # 一度に処理する数を制限
-            self._notify_progress('format', 'processing',
-                                  f'記憶 {mem["id"]} を整形中...')
-
-            prompt = FORMAT_PROMPT.format(memory=mem['memory_content'])
-            formatted = self.client.generate(prompt).strip()
-
-            # 元の内容と異なる場合のみ更新
-            if formatted and formatted != mem['memory_content']:
-                update_memory(mem['id'], formatted)
-                formatted_count += 1
-
-        return formatted_count
-
-    def _resolve_conflicts(self) -> int:
-        """
-        属性や目標の矛盾を解決する
-
-        Returns:
-            int: 解決された矛盾の数
-        """
-        resolved_count = 0
-
-        # 属性の矛盾を検出
-        attributes = get_all_attributes()
-        if len(attributes) >= 2:
-            resolved_count += self._resolve_item_conflicts(
-                attributes, 'attributes', 'attribute_name', 'attribute_value'
-            )
-
-        # 目標の矛盾を検出
-        goals = get_all_goals()
-        if len(goals) >= 2:
-            resolved_count += self._resolve_item_conflicts(
-                goals, 'goals', 'goal_content', 'goal_status'
-            )
-
-        return resolved_count
-
-    def _resolve_item_conflicts(self, items: List[Dict],
-                                item_type: str,
-                                name_field: str,
-                                value_field: str) -> int:
-        """
-        アイテムの矛盾を解決する内部メソッド
-
-        Args:
-            items: アイテムリスト
-            item_type: アイテムの種類
-            name_field: 名前フィールド名
-            value_field: 値フィールド名
-
-        Returns:
-            int: 解決された矛盾の数
-        """
-        # アイテムリストを文字列に変換
-        items_str = "\n".join([
-            f"ID:{item['id']} - {item.get(name_field, '')}: {item.get(value_field, '')} (更新: {item.get('updated_at', '')})"
-            for item in items
-        ])
-
-        prompt = CONFLICT_DETECTION_PROMPT.format(items=items_str)
-        response = self.client.generate(prompt)
-
-        try:
-            conflicts = self._parse_json_response(response)
-            if not isinstance(conflicts, list):
-                return 0
-
-            resolved_count = 0
-            for conflict in conflicts:
-                id1 = conflict.get('id1')
-                id2 = conflict.get('id2')
-                newer_id = conflict.get('newer_id')
-                older_id = id1 if newer_id == id2 else id2
-
-                self._notify_progress('conflict', 'processing',
-                                      f'{item_type}の矛盾を解決中 (ID:{id1}, {id2})...')
-
-                # 古い方を削除（属性の場合は物理削除、目標の場合は状態変更）
-                if item_type == 'attributes':
-                    from app.database import delete_attribute
-                    delete_attribute(older_id)
-                elif item_type == 'goals':
-                    update_goal(older_id, goal_status='cancelled')
-
-                resolved_count += 1
-
-            return resolved_count
-
-        except Exception:
-            return 0
-
-    def _compress_old_memories(self) -> int:
-        """
-        古い記憶を圧縮する
-
-        Returns:
-            int: 圧縮された記憶の数
-        """
-        memories = get_all_memories(active_only=True)
+    def _compress_old_episodes(self) -> int:
+        """古いエピソードを圧縮する"""
+        episodes = get_all_memories(active_only=True)
         compressed_count = 0
         now = datetime.now()
 
-        for mem in memories:
+        for ep in episodes:
             # 作成日時から経過日数を計算
-            created_at = datetime.fromisoformat(mem['created_at'].replace('Z', '+00:00').replace(' ', 'T'))
+            created_at = datetime.fromisoformat(
+                ep['created_at'].replace('Z', '+00:00').replace(' ', 'T')
+            )
             if created_at.tzinfo:
                 created_at = created_at.replace(tzinfo=None)
             days_old = (now - created_at).days
 
-            # 現在の圧縮レベル
-            current_level = mem.get('compression_level', 0)
-
-            # 経過日数に応じて圧縮レベルを決定
+            current_level = ep.get('compression_level', 0)
             thresholds = MEMORY_COMPRESSION_THRESHOLDS
+
+            # 圧縮レベルを決定
             if days_old >= thresholds['ancient'] and current_level < 3:
                 target_level = 3
             elif days_old >= thresholds['old'] and current_level < 2:
@@ -446,24 +558,244 @@ class MemoryOrganizer:
             elif days_old >= thresholds['medium'] and current_level < 1:
                 target_level = 1
             else:
-                continue  # 圧縮不要
+                continue
 
-            self._notify_progress('compress', 'processing',
-                                  f'記憶 {mem["id"]} を圧縮中 (レベル{target_level})...')
+            self._notify_progress(
+                'episode', 'processing',
+                f'エピソード {ep["id"]} を圧縮中（レベル{target_level}）...'
+            )
 
-            # 圧縮実行
             prompt = COMPRESS_PROMPT.format(
                 level=target_level,
-                memory=mem['memory_content']
+                content=ep['memory_content']
             )
             compressed = self.client.generate(prompt).strip()
 
-            if compressed and len(compressed) < len(mem['memory_content']):
-                update_memory(mem['id'], compressed)
-                update_compression_level('user_memories', mem['id'], target_level)
+            if compressed and len(compressed) < len(ep['memory_content']):
+                update_memory(ep['id'], compressed)
+                update_compression_level('user_memories', ep['id'], target_level)
                 compressed_count += 1
 
         return compressed_count
+
+    # ==================================================
+    # 目標の整理
+    # ==================================================
+
+    def _organize_goals(self) -> Dict[str, int]:
+        """
+        目標の整理を実行
+
+        Returns:
+            Dict: 処理結果
+        """
+        result = {'merged': 0, 'formatted': 0, 'conflicts_resolved': 0}
+        goals = get_all_goals(status_filter='active')
+
+        if not goals:
+            self._notify_progress(
+                'goal', 'skipped',
+                '整理対象の目標がありません'
+            )
+            return result
+
+        total = len(goals)
+        self._notify_progress(
+            'goal', 'processing',
+            f'{total}件の目標を確認中...',
+            current=0, total=total
+        )
+
+        # 矛盾検出と解決
+        if len(goals) >= 2:
+            conflicts = self._detect_conflicts(goals, 'goal_content', 'goal_status')
+            result['conflicts_resolved'] = self._resolve_goal_conflicts(conflicts, goals)
+
+        # 整形処理
+        goals = get_all_goals(status_filter='active')  # 再取得
+        for i, goal in enumerate(goals[:self.MAX_ITEMS_PER_STEP]):
+            self._notify_progress(
+                'goal', 'processing',
+                f'目標を整形中... ({i + 1}/{min(len(goals), self.MAX_ITEMS_PER_STEP)})',
+                current=i + 1, total=min(len(goals), self.MAX_ITEMS_PER_STEP)
+            )
+            if self._format_goal(goal):
+                result['formatted'] += 1
+
+        return result
+
+    def _format_goal(self, goal: Dict) -> bool:
+        """目標を整形する"""
+        prompt = FORMAT_PROMPT.format(text=goal['goal_content'])
+        formatted = self.client.generate(prompt).strip()
+
+        if formatted and formatted != goal['goal_content']:
+            update_goal(goal['id'], goal_content=formatted)
+            return True
+        return False
+
+    def _resolve_goal_conflicts(
+        self,
+        conflicts: List[Dict],
+        goals: List[Dict]
+    ) -> int:
+        """目標の矛盾を解決する"""
+        resolved = 0
+        processed_ids = set()
+
+        for conflict in conflicts:
+            id1, id2 = conflict.get('id1'), conflict.get('id2')
+            newer_id = conflict.get('newer_id')
+
+            if id1 in processed_ids or id2 in processed_ids:
+                continue
+
+            older_id = id1 if newer_id == id2 else id2
+            goal1 = next((g for g in goals if g['id'] == id1), None)
+            goal2 = next((g for g in goals if g['id'] == id2), None)
+
+            if goal1 and goal2:
+                self._notify_progress(
+                    'goal', 'processing',
+                    f'目標の矛盾を解決中...'
+                )
+                update_goal(older_id, goal_status='cancelled')
+                processed_ids.add(id1)
+                processed_ids.add(id2)
+                resolved += 1
+
+        return resolved
+
+    # ==================================================
+    # お願いの整理
+    # ==================================================
+
+    def _organize_requests(self) -> Dict[str, int]:
+        """
+        お願いの整理を実行
+
+        Returns:
+            Dict: 処理結果
+        """
+        result = {'merged': 0, 'formatted': 0}
+        requests = get_all_requests(active_only=True)
+
+        if not requests:
+            self._notify_progress(
+                'request', 'skipped',
+                '整理対象のお願いがありません'
+            )
+            return result
+
+        total = len(requests)
+        self._notify_progress(
+            'request', 'processing',
+            f'{total}件のお願いを確認中...',
+            current=0, total=total
+        )
+
+        # 重複検出と統合
+        if len(requests) >= 2:
+            result['merged'] = self._merge_duplicate_requests(requests)
+
+        # 整形処理
+        requests = get_all_requests(active_only=True)  # 再取得
+        for i, req in enumerate(requests[:self.MAX_ITEMS_PER_STEP]):
+            self._notify_progress(
+                'request', 'processing',
+                f'お願いを整形中... ({i + 1}/{min(len(requests), self.MAX_ITEMS_PER_STEP)})',
+                current=i + 1, total=min(len(requests), self.MAX_ITEMS_PER_STEP)
+            )
+            if self._format_request(req):
+                result['formatted'] += 1
+
+        return result
+
+    def _merge_duplicate_requests(self, requests: List[Dict]) -> int:
+        """重複するお願いを統合する"""
+        items_str = "\n".join([
+            f"ID:{req['id']} - {req['request_content']}"
+            for req in requests[:self.MAX_ITEMS_PER_STEP]
+        ])
+
+        prompt = DUPLICATE_DETECTION_PROMPT.format(items=items_str)
+        response = self.client.generate(prompt)
+
+        try:
+            duplicates = self._parse_json_response(response)
+            if not isinstance(duplicates, list):
+                return 0
+
+            merged_count = 0
+            processed_ids = set()
+
+            for dup in duplicates:
+                id1, id2 = dup.get('id1'), dup.get('id2')
+
+                if id1 in processed_ids or id2 in processed_ids:
+                    continue
+
+                req1 = next((r for r in requests if r['id'] == id1), None)
+                req2 = next((r for r in requests if r['id'] == id2), None)
+
+                if req1 and req2:
+                    self._notify_progress(
+                        'request', 'processing',
+                        f'お願い {id1} と {id2} を統合中...'
+                    )
+
+                    merge_prompt = MERGE_PROMPT.format(
+                        item1=req1['request_content'],
+                        item2=req2['request_content']
+                    )
+                    merged_content = self.client.generate(merge_prompt).strip()
+
+                    update_request(id1, merged_content)
+                    delete_request(id2)
+
+                    processed_ids.add(id1)
+                    processed_ids.add(id2)
+                    merged_count += 1
+
+            return merged_count
+
+        except Exception:
+            return 0
+
+    def _format_request(self, request: Dict) -> bool:
+        """お願いを整形する"""
+        prompt = FORMAT_PROMPT.format(text=request['request_content'])
+        formatted = self.client.generate(prompt).strip()
+
+        if formatted and formatted != request['request_content']:
+            update_request(request['id'], formatted)
+            return True
+        return False
+
+    # ==================================================
+    # 共通ユーティリティ
+    # ==================================================
+
+    def _detect_conflicts(
+        self,
+        items: List[Dict],
+        name_field: str,
+        value_field: str
+    ) -> List[Dict]:
+        """矛盾を検出する"""
+        items_str = "\n".join([
+            f"ID:{item['id']} - {item.get(name_field, '')}: {item.get(value_field, '')} (更新: {item.get('updated_at', '')})"
+            for item in items[:self.MAX_ITEMS_PER_STEP]
+        ])
+
+        prompt = CONFLICT_DETECTION_PROMPT.format(items=items_str)
+        response = self.client.generate(prompt)
+
+        try:
+            conflicts = self._parse_json_response(response)
+            return conflicts if isinstance(conflicts, list) else []
+        except Exception:
+            return []
 
     def _parse_json_response(self, response: str) -> Any:
         """
@@ -487,9 +819,7 @@ class MemoryOrganizer:
             return []
 
     def clear_logs(self):
-        """
-        処理ログをクリアする
-        """
+        """処理ログをクリアする"""
         self.organization_log = []
 
     def get_logs(self) -> List[Dict]:
@@ -521,16 +851,32 @@ def get_memory_organizer() -> MemoryOrganizer:
 
 # テスト用: 直接実行時の動作確認
 if __name__ == '__main__':
-    print("=== 記憶整理モジュールのテスト ===\n")
+    print("=== 情報整理モジュールのテスト ===\n")
 
     def progress_handler(info: Dict):
         """進捗表示用ハンドラー"""
-        print(f"[{info['step']}] {info['status']}: {info['message']}")
+        step_display = info.get('step_display', '')
+        prefix = f"[{step_display}] " if step_display else f"[{info['step']}] "
+
+        status_icons = {
+            'started': '▶️',
+            'processing': '⏳',
+            'completed': '✅',
+            'skipped': '⏭️',
+            'error': '❌'
+        }
+        icon = status_icons.get(info['status'], '•')
+
+        progress_str = ""
+        if info.get('progress') and info['progress']['total'] > 0:
+            progress_str = f" ({info['progress']['current']}/{info['progress']['total']})"
+
+        print(f"{prefix}{icon} {info['message']}{progress_str}")
 
     organizer = MemoryOrganizer()
     organizer.set_progress_callback(progress_handler)
 
-    print("記憶整理を実行します...")
+    print("情報整理を実行します...\n")
     results = organizer.organize_all()
 
     print("\n【結果サマリー】")

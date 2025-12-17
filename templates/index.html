@@ -10,7 +10,7 @@
     - リアルタイムチャット
     - テストモード切り替え
     - 履歴クリア
-    - 記憶整理の実行
+    - 情報整理の実行（属性/エピソード/目標/お願い）
     -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -72,8 +72,8 @@
                     <button id="clear-btn" class="btn btn-text" title="会話履歴をクリア">
                         履歴クリア
                     </button>
-                    <button id="organize-btn" class="btn btn-text" title="記憶の整理・圧縮を実行">
-                        記憶を整理
+                    <button id="organize-btn" class="btn btn-text" title="情報の整理・圧縮を実行（属性/エピソード/目標/お願い）">
+                        情報を整理
                     </button>
                 </div>
             </div>
@@ -90,10 +90,10 @@
             </div>
         </div>
 
-        <!-- 記憶整理の進捗表示モーダル -->
+        <!-- 情報整理の進捗表示モーダル -->
         <div class="modal" id="organize-modal" style="display: none;">
             <div class="modal-content">
-                <h2>記憶の整理・圧縮</h2>
+                <h2>情報の整理・圧縮</h2>
                 <div class="organize-progress" id="organize-progress">
                     <!-- 進捗がここに表示される -->
                 </div>
