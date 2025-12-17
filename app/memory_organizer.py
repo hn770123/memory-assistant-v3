@@ -73,81 +73,81 @@ class OrganizeStep(Enum):
 
 
 # ==================================================
-# LLMプロンプト定義（英語で指示、日本語で出力）
+# LLMプロンプト定義
 # ==================================================
 
 # 重複検出用プロンプト
-DUPLICATE_DETECTION_PROMPT = """Identify pairs of items that have the same meaning or are duplicates from the list below.
+DUPLICATE_DETECTION_PROMPT = """以下のリストから、同じ意味または重複している項目のペアを特定してください。
 
-### Item List
+### 項目リスト
 {items}
 
-### Output Format
-Output the duplicate pairs in JSON format. If there are no duplicates, return an empty array.
+### 出力形式
+重複ペアをJSON形式で出力してください。重複がない場合は空配列を返してください。
 ```json
 [
-    {{"id1": 1, "id2": 3, "reason": "Both mention exactly the same topic"}},
-    {{"id1": 2, "id2": 5, "reason": "Different expression of the same information"}}
+    {{"id1": 1, "id2": 3, "reason": "同じ内容"}},
+    {{"id1": 2, "id2": 5, "reason": "表現が異なるだけで同じ情報"}}
 ]
 ```
-Output **JSON ONLY**. No other text.
+**JSONのみ**を出力してください。
 """
 
 # 統合用プロンプト
-MERGE_PROMPT = """Merge the following two items into one.
-Include all important information from both to ensure no information is lost.
+MERGE_PROMPT = """以下の2つの項目を1つに統合してください。
+両方の重要な情報を含め、情報が失われないようにしてください。
 
-### Item 1
+### 項目1
 {item1}
 
-### Item 2
+### 項目2
 {item2}
 
-### Output Format
-Output the merged content in a single Japanese sentence. No JSON.
+### 出力形式
+統合した内容を1文で出力してください。JSONは不要です。
 """
 
 # 整形用プロンプト
-FORMAT_PROMPT = """Refine the expression of the following text into natural Japanese.
-Make it easier to read without changing the meaning.
+FORMAT_PROMPT = """以下のテキストを自然な日本語に整形してください。
+意味を変えずに読みやすくしてください。
 
-### Original Text
+### 元のテキスト
 {text}
 
-### Output Format
-Output the refined text in Japanese. Keep it concise.
+### 出力形式
+整形したテキストを簡潔に出力してください。
 """
 
 # 圧縮用プロンプト
-COMPRESS_PROMPT = """Compress the following episode.
-Keep the important information but make the expression shorter.
+COMPRESS_PROMPT = """以下のエピソードを圧縮してください。
+重要な情報は保持しつつ、表現を短くしてください。
 
-### Compression Level
-{level} (1:Light, 2:Medium, 3:Strong)
+### 圧縮レベル
+{level}（1:軽度、2:中度、3:強度）
 
-### Original Episode
+### 元のエピソード
 {content}
 
-### Output Format
-Output the compressed episode in Japanese. The higher the compression level, the shorter it should be.
+### 出力形式
+圧縮したエピソードを出力してください。圧縮レベルが高いほど短くしてください。
 """
 
 # 矛盾検出用プロンプト
-CONFLICT_DETECTION_PROMPT = """Identify conflicting items from the following list.
-Conflicting items have contradictory information about the same topic.
+CONFLICT_DETECTION_PROMPT = """以下のリストから、矛盾している項目を特定してください。
+矛盾とは、同じトピックについて相反する情報を持つものです。
 
-### Item List
+### 項目リスト
 {items}
 
-### Output Format
-Output the conflicting pairs in JSON format. If there are no conflicts, return an empty array.
+### 出力形式
+矛盾するペアをJSON形式で出力してください。矛盾がない場合は空配列を返してください。
 ```json
 [
-    {{"id1": 1, "id2": 3, "newer_id": 3, "reason": "Values are contradictory"}}
+    {{"id1": 1, "id2": 3, "newer_id": 3, "reason": "値が矛盾している"}}
 ]
 ```
-In `newer_id`, specify the ID of the newer information (the one that should be kept).
-Output **JSON ONLY**. No other text.
+`newer_id`には、新しい情報（残すべきもの）のIDを指定してください。
+**JSONのみ**を出力してください。
 """
 
 
