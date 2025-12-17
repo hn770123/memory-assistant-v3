@@ -247,8 +247,10 @@ def chat():
         is_memory_processing = True
         try:
             extractor = get_memory_extractor()
-            # 直前のAI応答を取得（history[-2]がユーザー入力前のAI応答）
-            prev_ai_response = history[-4]['content'] if len(history) >= 4 else ""
+            # 直前のAI応答を取得（history[-3]がユーザー入力前のAI応答）
+            # history: [..., AI(prev), User(curr), AI(curr)]
+            # インデックス: -3, -2, -1
+            prev_ai_response = history[-3]['content'] if len(history) >= 3 else ""
             extractor.process_input(user_input, prev_ai_response)
         finally:
             is_memory_processing = False
@@ -424,20 +426,36 @@ def remove_data(table_name, record_id):
 # 情報整理機能
 # ==================================================
 
+# グローバル変数：記憶整理の状態
+is_organizing = False
+
 @app.route('/organize', methods=['POST'])
 def organize_memories():
     """
     ユーザー情報の整理・圧縮を実行（属性/エピソード/目標/お願いの全て）
+    バックグラウンドで実行され、ステータスは /organize/status で確認します
     """
+    global is_organizing
+    if is_organizing:
+        return jsonify({'error': '既に実行中です'}), 409
+
     organizer = get_memory_organizer()
     organizer.clear_logs()
 
-    # 処理を実行
-    results = organizer.organize_all()
+    def run_organize():
+        global is_organizing
+        is_organizing = True
+        try:
+            organizer.organize_all()
+        finally:
+            is_organizing = False
+
+    # バックグラウンドで実行
+    threading.Thread(target=run_organize).start()
 
     return jsonify({
-        'results': results,
-        'logs': organizer.get_logs()
+        'status': 'started',
+        'message': '情報整理を開始しました'
     })
 
 
@@ -448,6 +466,7 @@ def get_organize_status():
     """
     organizer = get_memory_organizer()
     return jsonify({
+        'is_organizing': is_organizing,
         'logs': organizer.get_logs()
     })
 

@@ -375,6 +375,15 @@ class MemoryOrganizer:
         prompt = FORMAT_PROMPT.format(text=original)
         formatted = self.client.generate(prompt).strip()
 
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'format_attribute',
+            'attribute_id': attr['id'],
+            'prompt': prompt,
+            'response': formatted
+        })
+
         # 「名前: 値」形式から値部分を抽出
         if ':' in formatted:
             parts = formatted.split(':', 1)
@@ -481,6 +490,14 @@ class MemoryOrganizer:
         prompt = DUPLICATE_DETECTION_PROMPT.format(items=items_str)
         response = self.client.generate(prompt)
 
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'detect_duplicate_episodes',
+            'prompt': prompt,
+            'response': response
+        })
+
         try:
             duplicates = self._parse_json_response(response)
             if not isinstance(duplicates, list):
@@ -510,6 +527,16 @@ class MemoryOrganizer:
                     )
                     merged_content = self.client.generate(merge_prompt).strip()
 
+                    # ログ記録
+                    self.organization_log.append({
+                        'type': 'llm_interaction',
+                        'action': 'merge_episodes',
+                        'id1': id1,
+                        'id2': id2,
+                        'prompt': merge_prompt,
+                        'response': merged_content
+                    })
+
                     update_memory(id1, merged_content)
                     delete_memory(id2, hard_delete=False)
 
@@ -526,6 +553,15 @@ class MemoryOrganizer:
         """エピソードを整形する"""
         prompt = FORMAT_PROMPT.format(text=episode['memory_content'])
         formatted = self.client.generate(prompt).strip()
+
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'format_episode',
+            'episode_id': episode['id'],
+            'prompt': prompt,
+            'response': formatted
+        })
 
         if formatted and formatted != episode['memory_content']:
             update_memory(episode['id'], formatted)
@@ -570,6 +606,16 @@ class MemoryOrganizer:
                 content=ep['memory_content']
             )
             compressed = self.client.generate(prompt).strip()
+
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'compress_episode',
+                'episode_id': ep['id'],
+                'level': target_level,
+                'prompt': prompt,
+                'response': compressed
+            })
 
             if compressed and len(compressed) < len(ep['memory_content']):
                 update_memory(ep['id'], compressed)
@@ -628,6 +674,15 @@ class MemoryOrganizer:
         """目標を整形する"""
         prompt = FORMAT_PROMPT.format(text=goal['goal_content'])
         formatted = self.client.generate(prompt).strip()
+
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'format_goal',
+            'goal_id': goal['id'],
+            'prompt': prompt,
+            'response': formatted
+        })
 
         if formatted and formatted != goal['goal_content']:
             update_goal(goal['id'], goal_content=formatted)
@@ -721,6 +776,14 @@ class MemoryOrganizer:
         prompt = DUPLICATE_DETECTION_PROMPT.format(items=items_str)
         response = self.client.generate(prompt)
 
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'detect_duplicate_requests',
+            'prompt': prompt,
+            'response': response
+        })
+
         try:
             duplicates = self._parse_json_response(response)
             if not isinstance(duplicates, list):
@@ -750,6 +813,16 @@ class MemoryOrganizer:
                     )
                     merged_content = self.client.generate(merge_prompt).strip()
 
+                    # ログ記録
+                    self.organization_log.append({
+                        'type': 'llm_interaction',
+                        'action': 'merge_requests',
+                        'id1': id1,
+                        'id2': id2,
+                        'prompt': merge_prompt,
+                        'response': merged_content
+                    })
+
                     update_request(id1, merged_content)
                     delete_request(id2)
 
@@ -766,6 +839,15 @@ class MemoryOrganizer:
         """お願いを整形する"""
         prompt = FORMAT_PROMPT.format(text=request['request_content'])
         formatted = self.client.generate(prompt).strip()
+
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'format_request',
+            'request_id': request['id'],
+            'prompt': prompt,
+            'response': formatted
+        })
 
         if formatted and formatted != request['request_content']:
             update_request(request['id'], formatted)
@@ -790,6 +872,15 @@ class MemoryOrganizer:
 
         prompt = CONFLICT_DETECTION_PROMPT.format(items=items_str)
         response = self.client.generate(prompt)
+
+        # ログ記録
+        self.organization_log.append({
+            'type': 'llm_interaction',
+            'action': 'detect_conflicts',
+            'field': name_field,
+            'prompt': prompt,
+            'response': response
+        })
 
         try:
             conflicts = self._parse_json_response(response)

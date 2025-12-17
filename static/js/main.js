@@ -313,59 +313,102 @@ async function organizeMemories() {
             method: 'POST'
         });
 
-        const data = await response.json();
-
-        // 進捗ログを表示
-        organizeProgress.innerHTML = '';
-        data.logs.forEach(log => {
-            addProgressStep(log);
-        });
-
-        // 結果サマリーを表示
-        const r = data.results;
-        const summaryParts = [];
-
-        // 属性の結果
-        if (r.attributes) {
-            const a = r.attributes;
-            if (a.formatted > 0 || a.conflicts_resolved > 0) {
-                summaryParts.push(`属性: 整形${a.formatted}件, 矛盾解決${a.conflicts_resolved}件`);
-            }
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || '開始に失敗しました');
         }
 
-        // エピソードの結果
-        if (r.episodes) {
-            const e = r.episodes;
-            if (e.merged > 0 || e.formatted > 0 || e.compressed > 0) {
-                summaryParts.push(`エピソード: 統合${e.merged}件, 整形${e.formatted}件, 圧縮${e.compressed}件`);
+        // ポーリング開始
+        const pollInterval = setInterval(async () => {
+            try {
+                const statusRes = await fetch('/organize/status');
+
+                if (!statusRes.ok) {
+                    // エラーレスポンスの場合は例外を投げるかログに出してスキップ
+                    console.error('Status check failed:', statusRes.statusText);
+                    return; // 次のポーリングへ
+                }
+
+                const statusData = await statusRes.json();
+
+                // ログを表示更新
+
+                // ここでは既存のログ数と比較して、新しいものだけ追加する
+                const currentLogCount = organizeProgress.querySelectorAll('.progress-step').length;
+
+                // 既存の進捗表示をクリアして再描画（シンプルさ優先）
+                organizeProgress.innerHTML = '';
+
+                // 初期メッセージ
+                const initialDiv = document.createElement('div');
+                initialDiv.className = 'progress-step started';
+                initialDiv.textContent = '📋 情報整理を開始しています...';
+                organizeProgress.appendChild(initialDiv);
+
+                // サーバーからのログを表示 (logsが存在する場合のみ)
+                if (statusData.logs && Array.isArray(statusData.logs)) {
+                    statusData.logs.forEach(log => {
+                        // llm_interaction 以外を進捗に表示
+                        if (log.type !== 'llm_interaction') {
+                            addProgressStep(log);
+                        }
+                    });
+                }
+
+                // テストモードなら詳細ログを表示
+                if (testModeToggle.checked && statusData.logs && statusData.logs.length > 0) {
+                    // test-log にも表示（重複しないように制御が必要だが、今回は簡易的に全消し再描画は重いので、
+                    // 差分追加したいところだが、テストパネルは時系列でどんどん追加されるもの。
+                    // 今回の「リアルタイム表示」はテストパネルに「今何が起きているか」が出ればよい。
+                    // 常に最新の状態を反映させるため、オーガナイズ関係のログだけ抽出して表示する？
+                    // いや、以前の displayTestLogs は追加型。
+                    // ここではシンプルに「まだ表示していないログ」を追加する形にする
+
+                    // 簡易実装: 今回のセッションで表示済みのログID（インデックス）を管理
+                    if (!window.lastOrganizeLogIndex) window.lastOrganizeLogIndex = 0;
+
+                    const newLogs = statusData.logs.slice(window.lastOrganizeLogIndex);
+                    if (newLogs.length > 0) {
+                        const displayLogs = newLogs.map(log => ({
+                            type: 'memory_organize', // タイプを統一
+                            timestamp: log.timestamp || new Date().toISOString(),
+                            // llm_interaction なら詳細を、それ以外ならメッセージを
+                            ...(log.type === 'llm_interaction' ? {
+                                action: log.action,
+                                prompt: log.prompt,
+                                response: log.response,
+                                details: log // 他のフィールドも全部
+                            } : {
+                                message: log.message,
+                                step: log.step_display || log.step
+                            })
+                        }));
+
+                        // 専用の表示関数を作るか、既存を拡張する
+                        displayOrganizeLogs(displayLogs);
+                        window.lastOrganizeLogIndex = statusData.logs.length;
+                    }
+                }
+
+                if (!statusData.is_organizing) {
+                    clearInterval(pollInterval);
+                    closeModalBtn.style.display = 'block';
+                    window.lastOrganizeLogIndex = 0; // リセット
+
+                    // 完了メッセージ（最後のログが完了でなければ出すなど工夫もできるが、ログに含まれているはず）
+                }
+
+            } catch (e) {
+                console.error("Polling error", e);
+                clearInterval(pollInterval);
+                closeModalBtn.style.display = 'block';
+                addProgressStep({
+                    step: 'error',
+                    status: 'error',
+                    message: '❌ 通信エラーが発生しました'
+                });
             }
-        }
-
-        // 目標の結果
-        if (r.goals) {
-            const g = r.goals;
-            if (g.formatted > 0 || g.conflicts_resolved > 0) {
-                summaryParts.push(`目標: 整形${g.formatted}件, 矛盾解決${g.conflicts_resolved}件`);
-            }
-        }
-
-        // お願いの結果
-        if (r.requests) {
-            const req = r.requests;
-            if (req.merged > 0 || req.formatted > 0) {
-                summaryParts.push(`お願い: 統合${req.merged}件, 整形${req.formatted}件`);
-            }
-        }
-
-        const summaryMessage = summaryParts.length > 0
-            ? '🎉 完了: ' + summaryParts.join(' / ')
-            : '🎉 完了: 整理対象のデータがありませんでした';
-
-        addProgressStep({
-            step: 'summary',
-            status: 'completed',
-            message: summaryMessage
-        });
+        }, 500);
 
     } catch (error) {
         addProgressStep({
@@ -373,9 +416,40 @@ async function organizeMemories() {
             status: 'error',
             message: '❌ エラーが発生しました: ' + error.message
         });
-    } finally {
         closeModalBtn.style.display = 'block';
     }
+}
+
+/**
+ * 記憶整理のログをテストパネルに表示する
+ */
+function displayOrganizeLogs(logs) {
+    logs.forEach(log => {
+        const entryDiv = document.createElement('div');
+        entryDiv.className = 'test-log-entry';
+
+        let content = `<div class="type">memory_organize</div>`;
+        content += `<div class="timestamp">${log.timestamp}</div>`;
+
+        if (log.action) {
+            // LLMインタラクション
+            content += `<div style="color: #4ec9b0; margin-bottom:4px;">Action: ${log.action}</div>`;
+            if (log.prompt) {
+                content += `<div style="color: #ce9178;">Prompt:</div><pre>${escapeHtml(log.prompt).replace(/\\n/g, '\n')}</pre>`;
+            }
+            if (log.response) {
+                content += `<div style="color: #ce9178; margin-top:8px;">Response:</div><pre>${escapeHtml(typeof log.response === 'string' ? log.response : JSON.stringify(log.response, null, 2)).replace(/\\n/g, '\n')}</pre>`;
+            }
+        } else {
+            // 通常の進捗ログ
+            content += `<pre>${escapeHtml('[' + (log.step || 'INFO') + '] ' + log.message)}</pre>`;
+        }
+
+        entryDiv.innerHTML = content;
+        testLog.appendChild(entryDiv);
+    });
+
+    testLog.scrollTop = testLog.scrollHeight;
 }
 
 
@@ -469,13 +543,13 @@ function displayTestLogs(logs) {
 
         // ログの種類に応じて表示を変える
         if (log.type === 'mcp_context') {
-            content += `<pre>${escapeHtml(log.context).replace(/\n/g, '<br>')}</pre>`;
+            content += `<pre>${escapeHtml(log.context)}</pre>`;
         } else if (log.type === 'ollama_request') {
-            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2)).replace(/\n/g, '<br>')}</pre>`;
+            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2)).replace(/\\n/g, '\n')}</pre>`;
         } else if (log.type === 'session_reset') {
             content += `<pre>理由: ${log.reason}</pre>`;
         } else if (log.type === 'memory_extraction') {
-            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2)).replace(/\n/g, '<br>')}</pre>`;
+            content += `<pre>${escapeHtml(JSON.stringify(log.logs, null, 2)).replace(/\\n/g, '\n')}</pre>`;
         }
 
         entryDiv.innerHTML = content;
