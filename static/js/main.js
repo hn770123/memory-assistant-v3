@@ -7,7 +7,7 @@
  * - メッセージの送受信
  * - 履歴の管理
  * - テストモードの切り替え
- * - 記憶整理の実行
+ * - 情報整理の実行（属性/エピソード/目標/お願い）
  */
 
 // ===== DOM要素の取得 =====
@@ -300,12 +300,12 @@ async function clearHistory() {
 
 
 /**
- * 記憶の整理を実行する
+ * 情報整理を実行する（属性/エピソード/目標/お願いの全て）
  */
 async function organizeMemories() {
     // モーダルを表示
     organizeModal.style.display = 'flex';
-    organizeProgress.innerHTML = '<div class="progress-step started">記憶の整理を開始しています...</div>';
+    organizeProgress.innerHTML = '<div class="progress-step started">📋 情報整理を開始しています...</div>';
     closeModalBtn.style.display = 'none';
 
     try {
@@ -322,18 +322,56 @@ async function organizeMemories() {
         });
 
         // 結果サマリーを表示
-        const results = data.results;
+        const r = data.results;
+        const summaryParts = [];
+
+        // 属性の結果
+        if (r.attributes) {
+            const a = r.attributes;
+            if (a.formatted > 0 || a.conflicts_resolved > 0) {
+                summaryParts.push(`属性: 整形${a.formatted}件, 矛盾解決${a.conflicts_resolved}件`);
+            }
+        }
+
+        // エピソードの結果
+        if (r.episodes) {
+            const e = r.episodes;
+            if (e.merged > 0 || e.formatted > 0 || e.compressed > 0) {
+                summaryParts.push(`エピソード: 統合${e.merged}件, 整形${e.formatted}件, 圧縮${e.compressed}件`);
+            }
+        }
+
+        // 目標の結果
+        if (r.goals) {
+            const g = r.goals;
+            if (g.formatted > 0 || g.conflicts_resolved > 0) {
+                summaryParts.push(`目標: 整形${g.formatted}件, 矛盾解決${g.conflicts_resolved}件`);
+            }
+        }
+
+        // お願いの結果
+        if (r.requests) {
+            const req = r.requests;
+            if (req.merged > 0 || req.formatted > 0) {
+                summaryParts.push(`お願い: 統合${req.merged}件, 整形${req.formatted}件`);
+            }
+        }
+
+        const summaryMessage = summaryParts.length > 0
+            ? '🎉 完了: ' + summaryParts.join(' / ')
+            : '🎉 完了: 整理対象のデータがありませんでした';
+
         addProgressStep({
             step: 'summary',
             status: 'completed',
-            message: `完了: 統合${results.duplicates_merged}件, 整形${results.formatted}件, 矛盾解決${results.conflicts_resolved}件, 圧縮${results.compressed}件`
+            message: summaryMessage
         });
 
     } catch (error) {
         addProgressStep({
             step: 'error',
             status: 'error',
-            message: 'エラーが発生しました: ' + error.message
+            message: '❌ エラーが発生しました: ' + error.message
         });
     } finally {
         closeModalBtn.style.display = 'block';
@@ -349,7 +387,17 @@ async function organizeMemories() {
 function addProgressStep(log) {
     const stepDiv = document.createElement('div');
     stepDiv.className = `progress-step ${log.status}`;
-    stepDiv.textContent = `[${log.step}] ${log.message}`;
+
+    // ステップ表示名があればそれを使う、なければstepを使う
+    const stepLabel = log.step_display || log.step;
+
+    // 進捗情報があれば追加
+    let progressStr = '';
+    if (log.progress && log.progress.total > 0) {
+        progressStr = ` (${log.progress.current}/${log.progress.total})`;
+    }
+
+    stepDiv.textContent = `[${stepLabel}] ${log.message}${progressStr}`;
     organizeProgress.appendChild(stepDiv);
     organizeProgress.scrollTop = organizeProgress.scrollHeight;
 }
