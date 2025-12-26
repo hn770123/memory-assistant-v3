@@ -29,7 +29,14 @@ import os
 # プロジェクトルートをパスに追加
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from app.ollama_client import OllamaClient, get_ollama_client
+from app.structured_llm_client import StructuredLLMClient, get_structured_llm_client
+from app.extraction_models import (
+    DuplicateList,
+    ConflictList,
+    FormattedText,
+    MergedContent,
+    CompressedContent
+)
 from app.database import (
     get_all_memories,
     get_all_attributes,
@@ -73,24 +80,15 @@ class OrganizeStep(Enum):
 
 
 # ==================================================
-# LLMプロンプト定義
+# LLMプロンプト定義（2段階応答パターン用）
 # ==================================================
 
 # 重複検出用プロンプト
 DUPLICATE_DETECTION_PROMPT = """以下のリストから、同じ意味または重複している項目のペアを特定してください。
+重複がない場合は空のリストを返してください。
 
 ### 項目リスト
 {items}
-
-### 出力形式
-重複ペアをJSON形式で出力してください。重複がない場合は空配列を返してください。
-```json
-[
-    {{"id1": 1, "id2": 3, "reason": "同じ内容"}},
-    {{"id1": 2, "id2": 5, "reason": "表現が異なるだけで同じ情報"}}
-]
-```
-**JSONのみ**を出力してください。
 """
 
 # 統合用プロンプト
@@ -102,9 +100,6 @@ MERGE_PROMPT = """以下の2つの項目を1つに統合してください。
 
 ### 項目2
 {item2}
-
-### 出力形式
-統合した内容を1文で出力してください。JSONは不要です。
 """
 
 # 整形用プロンプト
@@ -113,9 +108,6 @@ FORMAT_PROMPT = """以下のテキストを自然な日本語に整形してく�
 
 ### 元のテキスト
 {text}
-
-### 出力形式
-整形したテキストを簡潔に出力してください。
 """
 
 # 圧縮用プロンプト
@@ -127,27 +119,17 @@ COMPRESS_PROMPT = """以下のエピソードを圧縮してください。
 
 ### 元のエピソード
 {content}
-
-### 出力形式
-圧縮したエピソードを出力してください。圧縮レベルが高いほど短くしてください。
 """
 
 # 矛盾検出用プロンプト
 CONFLICT_DETECTION_PROMPT = """以下のリストから、矛盾している項目を特定してください。
 矛盾とは、同じトピックについて相反する情報を持つものです。
+矛盾がない場合は空のリストを返してください。
+
+`newer_id`には、新しい情報（残すべきもの）のIDを指定してください。
 
 ### 項目リスト
 {items}
-
-### 出力形式
-矛盾するペアをJSON形式で出力してください。矛盾がない場合は空配列を返してください。
-```json
-[
-    {{"id1": 1, "id2": 3, "newer_id": 3, "reason": "値が矛盾している"}}
-]
-```
-`newer_id`には、新しい情報（残すべきもの）のIDを指定してください。
-**JSONのみ**を出力してください。
 """
 
 
@@ -157,19 +139,23 @@ class MemoryOrganizer:
 
     ユーザー情報の整理・圧縮処理を行い、進捗をコールバックで通知します。
     LLMへの負荷を考慮し、全ての処理は逐次実行されます。
+
+    2段階応答パターン:
+    1. 自然言語で分析・判断
+    2. 構造化データに変換
     """
 
     # 処理制限（一度に処理する最大件数）
     MAX_ITEMS_PER_STEP = 20
 
-    def __init__(self, ollama_client: OllamaClient = None):
+    def __init__(self, structured_client: StructuredLLMClient = None):
         """
         オーガナイザーを初期化
 
         Args:
-            ollama_client: Ollamaクライアント（省略時は自動取得）
+            structured_client: 構造化LLMクライアント（省略時は自動取得）
         """
-        self.client = ollama_client or get_ollama_client()
+        self.client = structured_client or get_structured_llm_client()
         # 進捗通知用コールバック
         self.progress_callback: Optional[Callable[[Dict], None]] = None
         # 処理ログ
@@ -370,34 +356,52 @@ class MemoryOrganizer:
         return result
 
     def _format_attribute(self, attr: Dict) -> bool:
-        """属性を整形する"""
+        """属性を整形する（2段階応答パターン）"""
         original = f"{attr['attribute_name']}: {attr['attribute_value']}"
         prompt = FORMAT_PROMPT.format(text=original)
-        formatted = self.client.generate(prompt).strip()
 
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'format_attribute',
-            'attribute_id': attr['id'],
-            'prompt': prompt,
-            'response': formatted
-        })
+        try:
+            # 2段階応答パターンで整形
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=FormattedText,
+                enable_two_stage=True
+            )
 
-        # 「名前: 値」形式から値部分を抽出
-        if ':' in formatted:
-            parts = formatted.split(':', 1)
-            if len(parts) == 2:
-                formatted_value = parts[1].strip()
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'format_attribute',
+                'attribute_id': attr['id'],
+                'prompt': prompt,
+                'response': result.formatted
+            })
+
+            formatted = result.formatted
+
+            # 「名前: 値」形式から値部分を抽出
+            if ':' in formatted:
+                parts = formatted.split(':', 1)
+                if len(parts) == 2:
+                    formatted_value = parts[1].strip()
+                else:
+                    formatted_value = formatted
             else:
                 formatted_value = formatted
-        else:
-            formatted_value = formatted
 
-        if formatted_value and formatted_value != attr['attribute_value']:
-            update_attribute(attr['id'], formatted_value)
-            return True
-        return False
+            if formatted_value and formatted_value != attr['attribute_value']:
+                update_attribute(attr['id'], formatted_value)
+                return True
+            return False
+        except Exception as e:
+            # エラー時はスキップ
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'format_attribute',
+                'attribute_id': attr['id'],
+                'error': str(e)
+            })
+            return False
 
     def _resolve_attribute_conflicts(
         self,
@@ -480,7 +484,7 @@ class MemoryOrganizer:
         return result
 
     def _merge_duplicate_episodes(self, episodes: List[Dict]) -> int:
-        """重複するエピソードを統合する"""
+        """重複するエピソードを統合する（2段階応答パターン）"""
         # エピソードリストを文字列に変換
         items_str = "\n".join([
             f"ID:{ep['id']} - {ep['memory_content']}"
@@ -488,26 +492,28 @@ class MemoryOrganizer:
         ])
 
         prompt = DUPLICATE_DETECTION_PROMPT.format(items=items_str)
-        response = self.client.generate(prompt)
-
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'detect_duplicate_episodes',
-            'prompt': prompt,
-            'response': response
-        })
 
         try:
-            duplicates = self._parse_json_response(response)
-            if not isinstance(duplicates, list):
-                return 0
+            # 2段階応答パターンで重複を検出
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=DuplicateList,
+                enable_two_stage=True
+            )
+
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'detect_duplicate_episodes',
+                'prompt': prompt,
+                'response': [d.model_dump() for d in result.duplicates]
+            })
 
             merged_count = 0
             processed_ids = set()
 
-            for dup in duplicates:
-                id1, id2 = dup.get('id1'), dup.get('id2')
+            for dup in result.duplicates:
+                id1, id2 = dup.id1, dup.id2
 
                 if id1 in processed_ids or id2 in processed_ids:
                     continue
@@ -525,7 +531,13 @@ class MemoryOrganizer:
                         item1=ep1['memory_content'],
                         item2=ep2['memory_content']
                     )
-                    merged_content = self.client.generate(merge_prompt).strip()
+
+                    # 2段階応答パターンで統合
+                    merge_result = self.client.generate_structured(
+                        prompt=merge_prompt,
+                        response_model=MergedContent,
+                        enable_two_stage=True
+                    )
 
                     # ログ記録
                     self.organization_log.append({
@@ -534,10 +546,10 @@ class MemoryOrganizer:
                         'id1': id1,
                         'id2': id2,
                         'prompt': merge_prompt,
-                        'response': merged_content
+                        'response': merge_result.merged
                     })
 
-                    update_memory(id1, merged_content)
+                    update_memory(id1, merge_result.merged)
                     delete_memory(id2, hard_delete=False)
 
                     processed_ids.add(id1)
@@ -546,30 +558,50 @@ class MemoryOrganizer:
 
             return merged_count
 
-        except Exception:
+        except Exception as e:
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'merge_duplicate_episodes',
+                'error': str(e)
+            })
             return 0
 
     def _format_episode(self, episode: Dict) -> bool:
-        """エピソードを整形する"""
+        """エピソードを整形する（2段階応答パターン）"""
         prompt = FORMAT_PROMPT.format(text=episode['memory_content'])
-        formatted = self.client.generate(prompt).strip()
 
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'format_episode',
-            'episode_id': episode['id'],
-            'prompt': prompt,
-            'response': formatted
-        })
+        try:
+            # 2段階応答パターンで整形
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=FormattedText,
+                enable_two_stage=True
+            )
 
-        if formatted and formatted != episode['memory_content']:
-            update_memory(episode['id'], formatted)
-            return True
-        return False
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'format_episode',
+                'episode_id': episode['id'],
+                'prompt': prompt,
+                'response': result.formatted
+            })
+
+            if result.formatted and result.formatted != episode['memory_content']:
+                update_memory(episode['id'], result.formatted)
+                return True
+            return False
+        except Exception as e:
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'format_episode',
+                'episode_id': episode['id'],
+                'error': str(e)
+            })
+            return False
 
     def _compress_old_episodes(self) -> int:
-        """古いエピソードを圧縮する"""
+        """古いエピソードを圧縮する（2段階応答パターン）"""
         episodes = get_all_memories(active_only=True)
         compressed_count = 0
         now = datetime.now()
@@ -605,22 +637,36 @@ class MemoryOrganizer:
                 level=target_level,
                 content=ep['memory_content']
             )
-            compressed = self.client.generate(prompt).strip()
 
-            # ログ記録
-            self.organization_log.append({
-                'type': 'llm_interaction',
-                'action': 'compress_episode',
-                'episode_id': ep['id'],
-                'level': target_level,
-                'prompt': prompt,
-                'response': compressed
-            })
+            try:
+                # 2段階応答パターンで圧縮
+                result = self.client.generate_structured(
+                    prompt=prompt,
+                    response_model=CompressedContent,
+                    enable_two_stage=True
+                )
 
-            if compressed and len(compressed) < len(ep['memory_content']):
-                update_memory(ep['id'], compressed)
-                update_compression_level('user_memories', ep['id'], target_level)
-                compressed_count += 1
+                # ログ記録
+                self.organization_log.append({
+                    'type': 'llm_interaction',
+                    'action': 'compress_episode',
+                    'episode_id': ep['id'],
+                    'level': target_level,
+                    'prompt': prompt,
+                    'response': result.compressed
+                })
+
+                if result.compressed and len(result.compressed) < len(ep['memory_content']):
+                    update_memory(ep['id'], result.compressed)
+                    update_compression_level('user_memories', ep['id'], target_level)
+                    compressed_count += 1
+            except Exception as e:
+                self.organization_log.append({
+                    'type': 'llm_error',
+                    'action': 'compress_episode',
+                    'episode_id': ep['id'],
+                    'error': str(e)
+                })
 
         return compressed_count
 
@@ -671,23 +717,38 @@ class MemoryOrganizer:
         return result
 
     def _format_goal(self, goal: Dict) -> bool:
-        """目標を整形する"""
+        """目標を整形する（2段階応答パターン）"""
         prompt = FORMAT_PROMPT.format(text=goal['goal_content'])
-        formatted = self.client.generate(prompt).strip()
 
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'format_goal',
-            'goal_id': goal['id'],
-            'prompt': prompt,
-            'response': formatted
-        })
+        try:
+            # 2段階応答パターンで整形
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=FormattedText,
+                enable_two_stage=True
+            )
 
-        if formatted and formatted != goal['goal_content']:
-            update_goal(goal['id'], goal_content=formatted)
-            return True
-        return False
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'format_goal',
+                'goal_id': goal['id'],
+                'prompt': prompt,
+                'response': result.formatted
+            })
+
+            if result.formatted and result.formatted != goal['goal_content']:
+                update_goal(goal['id'], goal_content=result.formatted)
+                return True
+            return False
+        except Exception as e:
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'format_goal',
+                'goal_id': goal['id'],
+                'error': str(e)
+            })
+            return False
 
     def _resolve_goal_conflicts(
         self,
@@ -767,33 +828,35 @@ class MemoryOrganizer:
         return result
 
     def _merge_duplicate_requests(self, requests: List[Dict]) -> int:
-        """重複するお願いを統合する"""
+        """重複するお願いを統合する（2段階応答パターン）"""
         items_str = "\n".join([
             f"ID:{req['id']} - {req['request_content']}"
             for req in requests[:self.MAX_ITEMS_PER_STEP]
         ])
 
         prompt = DUPLICATE_DETECTION_PROMPT.format(items=items_str)
-        response = self.client.generate(prompt)
-
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'detect_duplicate_requests',
-            'prompt': prompt,
-            'response': response
-        })
 
         try:
-            duplicates = self._parse_json_response(response)
-            if not isinstance(duplicates, list):
-                return 0
+            # 2段階応答パターンで重複を検出
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=DuplicateList,
+                enable_two_stage=True
+            )
+
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'detect_duplicate_requests',
+                'prompt': prompt,
+                'response': [d.model_dump() for d in result.duplicates]
+            })
 
             merged_count = 0
             processed_ids = set()
 
-            for dup in duplicates:
-                id1, id2 = dup.get('id1'), dup.get('id2')
+            for dup in result.duplicates:
+                id1, id2 = dup.id1, dup.id2
 
                 if id1 in processed_ids or id2 in processed_ids:
                     continue
@@ -811,7 +874,13 @@ class MemoryOrganizer:
                         item1=req1['request_content'],
                         item2=req2['request_content']
                     )
-                    merged_content = self.client.generate(merge_prompt).strip()
+
+                    # 2段階応答パターンで統合
+                    merge_result = self.client.generate_structured(
+                        prompt=merge_prompt,
+                        response_model=MergedContent,
+                        enable_two_stage=True
+                    )
 
                     # ログ記録
                     self.organization_log.append({
@@ -820,10 +889,10 @@ class MemoryOrganizer:
                         'id1': id1,
                         'id2': id2,
                         'prompt': merge_prompt,
-                        'response': merged_content
+                        'response': merge_result.merged
                     })
 
-                    update_request(id1, merged_content)
+                    update_request(id1, merge_result.merged)
                     delete_request(id2)
 
                     processed_ids.add(id1)
@@ -832,27 +901,47 @@ class MemoryOrganizer:
 
             return merged_count
 
-        except Exception:
+        except Exception as e:
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'merge_duplicate_requests',
+                'error': str(e)
+            })
             return 0
 
     def _format_request(self, request: Dict) -> bool:
-        """お願いを整形する"""
+        """お願いを整形する（2段階応答パターン）"""
         prompt = FORMAT_PROMPT.format(text=request['request_content'])
-        formatted = self.client.generate(prompt).strip()
 
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'format_request',
-            'request_id': request['id'],
-            'prompt': prompt,
-            'response': formatted
-        })
+        try:
+            # 2段階応答パターンで整形
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=FormattedText,
+                enable_two_stage=True
+            )
 
-        if formatted and formatted != request['request_content']:
-            update_request(request['id'], formatted)
-            return True
-        return False
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'format_request',
+                'request_id': request['id'],
+                'prompt': prompt,
+                'response': result.formatted
+            })
+
+            if result.formatted and result.formatted != request['request_content']:
+                update_request(request['id'], result.formatted)
+                return True
+            return False
+        except Exception as e:
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'format_request',
+                'request_id': request['id'],
+                'error': str(e)
+            })
+            return False
 
     # ==================================================
     # 共通ユーティリティ
@@ -864,28 +953,40 @@ class MemoryOrganizer:
         name_field: str,
         value_field: str
     ) -> List[Dict]:
-        """矛盾を検出する"""
+        """矛盾を検出する（2段階応答パターン）"""
         items_str = "\n".join([
             f"ID:{item['id']} - {item.get(name_field, '')}: {item.get(value_field, '')} (更新: {item.get('updated_at', '')})"
             for item in items[:self.MAX_ITEMS_PER_STEP]
         ])
 
         prompt = CONFLICT_DETECTION_PROMPT.format(items=items_str)
-        response = self.client.generate(prompt)
-
-        # ログ記録
-        self.organization_log.append({
-            'type': 'llm_interaction',
-            'action': 'detect_conflicts',
-            'field': name_field,
-            'prompt': prompt,
-            'response': response
-        })
 
         try:
-            conflicts = self._parse_json_response(response)
-            return conflicts if isinstance(conflicts, list) else []
-        except Exception:
+            # 2段階応答パターンで矛盾を検出
+            result = self.client.generate_structured(
+                prompt=prompt,
+                response_model=ConflictList,
+                enable_two_stage=True
+            )
+
+            # ログ記録
+            self.organization_log.append({
+                'type': 'llm_interaction',
+                'action': 'detect_conflicts',
+                'field': name_field,
+                'prompt': prompt,
+                'response': [c.model_dump() for c in result.conflicts]
+            })
+
+            return [c.model_dump() for c in result.conflicts]
+        except Exception as e:
+            # エラー時は空のリストを返す
+            self.organization_log.append({
+                'type': 'llm_error',
+                'action': 'detect_conflicts',
+                'field': name_field,
+                'error': str(e)
+            })
             return []
 
     def _parse_json_response(self, response: str) -> Any:

@@ -24,7 +24,8 @@ import os
 # プロジェクトルートをパスに追加
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from app.ollama_client import OllamaClient, get_ollama_client
+from app.structured_llm_client import StructuredLLMClient, get_structured_llm_client
+from app.extraction_models import ExtractedMemories
 from app.database import (
     add_attribute,
     add_memory,
@@ -36,7 +37,7 @@ from app.database import (
 )
 
 
-# 記憶抽出用のプロンプト
+# 記憶抽出用のプロンプト（2段階応答パターン用）
 EXTRACTION_PROMPT = """あなたは会話から重要な情報を正確に抽出するAIです。
 ユーザーの発言から、保存すべき情報を漏れなく、改変せずに抽出してください。
 
@@ -56,35 +57,6 @@ AI応答: {ai_response}
 - goals: やりたいこと、達成したいこと、予定など
 - requests: アシスタントへのお願い（話し方、振る舞いなど）
 
-## 出力形式
-JSONのみを出力してください。抽出する情報がない場合は空配列を返してください。
-
-入力例:
-ユーザー: 「私は東京に住んでいるプログラマーです。」
-
-出力例:
-```json
-{{
-    "attributes": [
-        {{"name": "居住地", "value": "東京"}},
-        {{"name": "職業", "value": "プログラマー"}}
-    ],
-    "memories": [],
-    "goals": [],
-    "requests": []
-}}
-```
-
-## 出力構造
-```json
-{{
-    "attributes": [{{"name": "属性名", "value": "値"}}],
-    "memories": [{{"content": "内容", "category": "カテゴリ"}}],
-    "goals": [{{"content": "内容", "priority": 5}}],
-    "requests": [{{"content": "内容", "category": "カテゴリ"}}]
-}}
-```
-
 ## カテゴリ値
 - memories: "general", "preference", "event", "knowledge"
 - requests: "tone", "behavior", "format", "general"
@@ -94,7 +66,8 @@ JSONのみを出力してください。抽出する情報がない場合は空�
 - 「私は」「僕は」などの一人称に注目する
 - AIが生成した表現は除外する
 - 不確かな情報は含めない
-- JSONのみ出力（説明文は不要）
+
+ユーザーの発言を分析し、抽出すべき情報を特定してください。
 """
 
 
@@ -104,23 +77,27 @@ class MemoryExtractor:
 
     ユーザーの入力から記憶すべき情報を抽出し、
     データベースに保存します。
+
+    2段階応答パターン:
+    1. 自然言語で情報を分析・抽出
+    2. 構造化データに変換
     """
 
-    def __init__(self, ollama_client: OllamaClient = None):
+    def __init__(self, structured_client: StructuredLLMClient = None):
         """
         エクストラクターを初期化
 
         Args:
-            ollama_client: Ollamaクライアント（省略時は自動取得）
+            structured_client: 構造化LLMクライアント（省略時は自動取得）
         """
-        self.client = ollama_client or get_ollama_client()
+        self.client = structured_client or get_structured_llm_client()
         # テストモード用のログ
         self.extraction_log = []
 
     def extract_memories(self, user_input: str,
                          ai_response: str = "") -> Dict[str, List]:
         """
-        ユーザー入力から記憶を抽出する
+        ユーザー入力から記憶を抽出する（2段階応答パターン）
 
         Args:
             user_input: ユーザーの入力テキスト
@@ -148,19 +125,26 @@ class MemoryExtractor:
         })
 
         try:
-            # LLMで抽出
-            response = self.client.generate(prompt, format='json')
+            # 2段階応答パターンで構造化データを抽出
+            extracted_obj = self.client.generate_structured(
+                prompt=prompt,
+                response_model=ExtractedMemories,
+                enable_two_stage=True
+            )
 
             # テストモード用にログを記録
             self.extraction_log.append({
                 'type': 'extraction_response',
-                'raw_response': response
+                'structured_data': extracted_obj.model_dump()
             })
 
-            # JSONを抽出して解析
-            extracted = self._parse_json_response(response)
-
-            return extracted
+            # Pydanticモデルを辞書形式に変換
+            return {
+                'attributes': [attr.model_dump() for attr in extracted_obj.attributes],
+                'memories': [mem.model_dump() for mem in extracted_obj.memories],
+                'goals': [goal.model_dump() for goal in extracted_obj.goals],
+                'requests': [req.model_dump() for req in extracted_obj.requests]
+            }
 
         except Exception as e:
             # エラー時は空の結果を返す
